@@ -79,19 +79,19 @@ func normalizeMagicHeader(spec string) (MagicHeader, error) {
 	if spec == "" {
 		return "", nil
 	}
-	parts := strings.Split(spec, "-")
-	if len(parts) > 2 {
+	part0, part1, hasDash := strings.Cut(spec, "-")
+	if hasDash && strings.Contains(part1, "-") {
 		return "", E.New("invalid magic header ", strconv.Quote(spec), ": expected uint32 or \"min-max\"")
 	}
-	start, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 32)
+	start, err := strconv.ParseUint(strings.TrimSpace(part0), 10, 32)
 	if err != nil {
-		return "", E.New("invalid magic header ", strconv.Quote(spec), ": parse ", strconv.Quote(parts[0]), ": ", err)
+		return "", E.New("invalid magic header ", strconv.Quote(spec), ": parse ", strconv.Quote(part0), ": ", err)
 	}
 	end := start
-	if len(parts) == 2 {
-		end, err = strconv.ParseUint(strings.TrimSpace(parts[1]), 10, 32)
+	if hasDash {
+		end, err = strconv.ParseUint(strings.TrimSpace(part1), 10, 32)
 		if err != nil {
-			return "", E.New("invalid magic header ", strconv.Quote(spec), ": parse ", strconv.Quote(parts[1]), ": ", err)
+			return "", E.New("invalid magic header ", strconv.Quote(spec), ": parse ", strconv.Quote(part1), ": ", err)
 		}
 	}
 	if end < start {
