@@ -13,10 +13,10 @@
 - [x] Verify clean compilation and config validation on Go 1.26.
 
 ## Phase 3: AmneziaWG 3.1 & Anti-Censorship DNS
-- [ ] Port `RandomTrailers` implementation from `amnezia-vpn/amneziawg-go`.
-- [ ] Port `DisableCookie` implementation.
-- [ ] Update config schema for AWG 3.1 parameters (`random_trailers`, `disable_cookies`, `header_protection_key`, `content_padding_addition`).
-- [ ] Validate DNS anti-censorship configurations (ECH/SVCB type 65 rejection, tunnel detour, FakeIP).
+- [x] Port `RandomTrailers` implementation from `amnezia-vpn/amneziawg-go`.
+- [x] Port `DisableCookie` implementation.
+- [x] Update config schema for AWG 3.1 parameters (`random_trailers`, `disable_cookies`, `header_protection_key`, `content_padding_addition`, `rekey_after_time`).
+- [x] Validate DNS anti-censorship configurations (ECH/SVCB type 65 rejection, tunnel detour, FakeIP).
 
 ## Phase 4: Cross-Platform CI / Release Automation
 - [ ] Create `.github/workflows/release.yml`.
