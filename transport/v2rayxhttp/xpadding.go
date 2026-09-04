@@ -4,7 +4,6 @@ import (
 	cryptorand "crypto/rand"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 	"unsafe"
 
@@ -61,12 +60,7 @@ func (c *Client) applyXPadding(request *http.Request) {
 	case placementQuery:
 		setQuery(request.URL, m.xPaddingKey, pad)
 	case placementQueryInHeader:
-		// Build "<scheme>://<host><path>?<key>=<pad>" and put it in the header.
-		// Xray assigns RawQuery directly as key+"="+pad WITHOUT url-encoding the
-		// padding; padding is base62 / 'X'/'Z' only, so this is safe to replicate.
-		u := &url.URL{Scheme: c.scheme, Host: c.host, Path: request.URL.Path}
-		u.RawQuery = m.xPaddingKey + "=" + pad
-		request.Header.Set(m.xPaddingHeader, u.String())
+		request.Header.Set(m.xPaddingHeader, c.scheme+"://"+c.host+request.URL.Path+"?"+m.xPaddingKey+"="+pad)
 	}
 }
 

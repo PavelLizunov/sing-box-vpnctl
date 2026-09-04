@@ -509,6 +509,14 @@ func appendPathSegment(path, seg string) string {
 
 // setQuery adds key=value to the URL's RawQuery, preserving any existing params.
 func setQuery(u *url.URL, key, value string) {
+	if u.RawQuery == "" {
+		u.RawQuery = url.QueryEscape(key) + "=" + url.QueryEscape(value)
+		return
+	}
+	if !strings.Contains(u.RawQuery, key+"=") {
+		u.RawQuery += "&" + url.QueryEscape(key) + "=" + url.QueryEscape(value)
+		return
+	}
 	q := u.Query()
 	q.Set(key, value)
 	u.RawQuery = q.Encode()
