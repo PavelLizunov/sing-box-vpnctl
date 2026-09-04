@@ -133,11 +133,15 @@ func generateTokenishPaddingBase62(target int) string {
 		encoded := int(hpack.HuffmanEncodeLength(unsafe.String(unsafe.SliceData(buf), len(buf))))
 		switch {
 		case encoded < target-2:
-			// too short: append an incompressible filler byte.
-			if len(buf)%2 == 0 {
-				buf = append(buf, 'X')
-			} else {
-				buf = append(buf, 'Z')
+			// 'X' and 'Z' both have 8-bit (1 byte) Huffman codes.
+			// Bulk-append the exact needed deficit so encoded reaches target immediately.
+			deficit := target - encoded
+			for k := 0; k < deficit; k++ {
+				if len(buf)%2 == 0 {
+					buf = append(buf, 'X')
+				} else {
+					buf = append(buf, 'Z')
+				}
 			}
 		case encoded > target+2:
 			// too long: drop a byte.
