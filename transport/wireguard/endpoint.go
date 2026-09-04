@@ -53,6 +53,11 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	if options.ListenPort != 0 {
 		ipcConf += "\nlisten_port=" + F.ToString(options.ListenPort)
 	}
+	awgLines, err := awgIpcLines(options.AmneziaWG)
+	if err != nil {
+		return nil, err
+	}
+	ipcConf += awgLines
 	var peers []peerConfig
 	for peerIndex, rawPeer := range options.Peers {
 		peer := peerConfig{
@@ -98,8 +103,12 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 		return nil, err
 	}
 	allowedAddresses := allowedIPSet.Prefixes()
+	awgJunk := options.AmneziaWG.S4
 	if options.MTU == 0 {
 		options.MTU = 1408
+		if awgJunk > 0 {
+			options.MTU = 1280
+		}
 	}
 	deviceOptions := DeviceOptions{
 		Context:         options.Context,

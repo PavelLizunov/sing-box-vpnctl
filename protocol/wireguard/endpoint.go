@@ -126,6 +126,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			}
 		}),
 		Workers: options.Workers,
+		AmneziaWG: options.AmneziaWGOptions,
 	})
 	if err != nil {
 		return nil, err
