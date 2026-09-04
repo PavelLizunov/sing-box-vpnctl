@@ -202,7 +202,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		return err
 	}
 
-	var sendBuffer [][]byte
+	sendBuffer := make([][]byte, 0, len(peer.device.ipackets)+peer.device.junk.count+1)
 
 	for _, ipacket := range peer.device.ipackets {
 		if ipacket != nil {
