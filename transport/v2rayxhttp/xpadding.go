@@ -10,6 +10,25 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
+var (
+	zeroPaddingBuf = strings.Repeat("0", 4096)
+	xPaddingBuf    = strings.Repeat("X", 4096)
+)
+
+func getStaticZeroPadding(n int) string {
+	if n <= len(zeroPaddingBuf) {
+		return zeroPaddingBuf[:n]
+	}
+	return strings.Repeat("0", n)
+}
+
+func getStaticXPadding(n int) string {
+	if n <= len(xPaddingBuf) {
+		return xPaddingBuf[:n]
+	}
+	return strings.Repeat("X", n)
+}
+
 // randIntn returns a non-negative pseudo-random int in [0,n). It wraps math/rand so
 // the transport has a single, easily-auditable randomness entry point. Padding
 // length jitter and session ids are not security-sensitive (they only blur on-wire
@@ -44,7 +63,7 @@ func (c *Client) applyXPadding(request *http.Request) {
 		if n <= 0 {
 			return
 		}
-		pad := strings.Repeat("0", n)
+		pad := getStaticZeroPadding(n)
 		request.Header.Set("Referer", c.scheme+"://"+c.host+request.URL.Path+"?x_padding="+pad)
 		return
 	}
@@ -77,7 +96,7 @@ func (c *Client) generatePadding() string {
 	if c.meta.xPaddingMethod == methodTokenish {
 		return generateTokenishPaddingBase62(n)
 	}
-	return strings.Repeat("X", n)
+	return getStaticXPadding(n)
 }
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
