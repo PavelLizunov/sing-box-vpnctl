@@ -3,13 +3,11 @@
 package wireguard
 
 import (
-	"encoding/hex"
 	"strconv"
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	F "github.com/sagernet/sing/common/format"
 )
 
 // awgIpcLines renders the AmneziaWG 2.0 device-global obfuscation parameters as
@@ -42,12 +40,13 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		return "", err
 	}
 	var b strings.Builder
+	b.Grow(256)
 	writeUint := func(key string, value uint32) {
 		if value != 0 {
 			b.WriteString("\n")
 			b.WriteString(key)
 			b.WriteString("=")
-			b.WriteString(F.ToString(value))
+			b.WriteString(strconv.FormatUint(uint64(value), 10))
 		}
 	}
 	writeStr := func(key, value string) {
@@ -98,13 +97,17 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeUint("s2", o.S2)
 	writeUint("s3", o.S3)
 	writeUint("s4", o.S4)
-	for _, header := range []struct {
-		key   string
-		value option.MagicHeader
-	}{{"h1", o.H1}, {"h2", o.H2}, {"h3", o.H3}, {"h4", o.H4}} {
-		if err := writeMagic(header.key, header.value); err != nil {
-			return "", err
-		}
+	if err := writeMagic("h1", o.H1); err != nil {
+		return "", err
+	}
+	if err := writeMagic("h2", o.H2); err != nil {
+		return "", err
+	}
+	if err := writeMagic("h3", o.H3); err != nil {
+		return "", err
+	}
+	if err := writeMagic("h4", o.H4); err != nil {
+		return "", err
 	}
 	writeStr("i1", i1)
 	writeStr("i2", i2)
@@ -122,8 +125,7 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		}
 	}
 	if o.HeaderProtectionKey != "" {
-		keyBytes, err := hex.DecodeString(o.HeaderProtectionKey)
-		if err != nil || len(keyBytes) != 32 {
+		if len(o.HeaderProtectionKey) != 64 || !isHex(o.HeaderProtectionKey) {
 			return "", E.New("amneziawg: header_protection_key must be a valid 64-character hex string (32 bytes)")
 		}
 		if o.S1 < 12 || o.S2 < 12 || o.S3 < 12 || o.S4 < 12 {
@@ -139,6 +141,16 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	return b.String(), nil
 }
 
+func isHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // validateJunk rejects a jmin/jmax junk-size range with jmin > jmax before it
 // reaches the device, so a bad config fails at endpoint build / `sing-box check`
 // with a clear error instead of panicking later at handshake time. The vendored
@@ -152,7 +164,7 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 // to keep the diff minimal and avoid rejecting a working real-server config.
 func validateJunk(o option.AmneziaWGOptions) error {
 	if o.Jmin > o.Jmax {
-		return E.New("amneziawg: jmin (", F.ToString(o.Jmin), ") must be <= jmax (", F.ToString(o.Jmax), ")")
+		return E.New("amneziawg: jmin (", strconv.FormatUint(uint64(o.Jmin), 10), ") must be <= jmax (", strconv.FormatUint(uint64(o.Jmax), 10), ")")
 	}
 	return nil
 }
