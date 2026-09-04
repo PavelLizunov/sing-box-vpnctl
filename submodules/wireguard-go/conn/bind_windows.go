@@ -462,8 +462,10 @@ func (bind *WinRingBind) receiveIPv4(bufs [][]byte, sizes []int, eps []Endpoint)
 	defer bind.mu.RUnlock()
 	n, ep, err := bind.v4.Receive(bufs[0], &bind.isOpen)
 	if n > 3 {
-		if _, resvLoaded := bind.reservedForEndpoint[*ep]; resvLoaded {
-			common.ClearArray(bufs[0][1:4])
+		if wep, ok := ep.(*WinRingEndpoint); ok {
+			if _, resvLoaded := bind.reservedForEndpoint[*wep]; resvLoaded {
+				common.ClearArray(bufs[0][1:4])
+			}
 		}
 	}
 	sizes[0] = n
@@ -476,8 +478,10 @@ func (bind *WinRingBind) receiveIPv6(bufs [][]byte, sizes []int, eps []Endpoint)
 	defer bind.mu.RUnlock()
 	n, ep, err := bind.v6.Receive(bufs[0], &bind.isOpen)
 	if n > 3 {
-		if _, resvLoaded := bind.reservedForEndpoint[*ep]; resvLoaded {
-			common.ClearArray(bufs[0][1:4])
+		if wep, ok := ep.(*WinRingEndpoint); ok {
+			if _, resvLoaded := bind.reservedForEndpoint[*wep]; resvLoaded {
+				common.ClearArray(bufs[0][1:4])
+			}
 		}
 	}
 	sizes[0] = n
