@@ -19,9 +19,10 @@
 - [x] Validate DNS anti-censorship configurations (ECH/SVCB type 65 rejection, tunnel detour, FakeIP).
 
 ## Phase 4: Cross-Platform CI / Release Automation
-- [ ] Create `.github/workflows/release.yml`.
-- [ ] Build matrix for Windows, Linux, macOS, and Android (`libbox.aar`).
-- [ ] Automate `.sha256` checksum generation and release publishing.
+- [x] Create `.github/workflows/release.yml`.
+- [x] Build matrix for Windows, Linux, macOS, and Android (`libbox.aar`).
+- [x] Automate `.sha256` checksum generation and release publishing.
+- [x] Create `.github/workflows/ci.yml` smoke CI and verify on GitHub Actions.
 
 ## Phase 5: VPNRouter and vpnctl Integration
 - [ ] Update VPNRouter build scripts to consume `PavelLizunov/sing-box-vpnctl`.
