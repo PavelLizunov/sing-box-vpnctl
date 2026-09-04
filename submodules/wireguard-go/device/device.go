@@ -126,8 +126,7 @@ type Device struct {
 
 	// AmneziaWG 3.1
 	headerProtection struct {
-		sync.RWMutex
-		key HeaderCipherKey
+		key atomic.Pointer[HeaderCipherKey]
 	}
 	contentPaddingAddition AtomicUintRange
 	randomTrailers         atomic.Bool
@@ -807,13 +806,11 @@ func (device *Device) BindClose() error {
 }
 
 func (device *Device) HeaderProtectionCipher(salt []byte) (*chacha20.Cipher, error) {
-	device.headerProtection.RLock()
-	defer device.headerProtection.RUnlock()
-
-	if device.headerProtection.key.IsZero() {
+	key := device.headerProtection.key.Load()
+	if key == nil || key.IsZero() {
 		return nil, nil
 	}
 
-	return chacha20.NewUnauthenticatedCipher(device.headerProtection.key[:], salt)
+	return chacha20.NewUnauthenticatedCipher(key[:], salt)
 }
 

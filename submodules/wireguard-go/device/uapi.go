@@ -156,11 +156,9 @@ func (device *Device) IpcGetOperation(w io.Writer) error {
 			sendf("disable_cookies=true")
 		}
 
-		device.headerProtection.RLock()
-		if !device.headerProtection.key.IsZero() {
-			sendf("header_protection_key=%s", hex.EncodeToString(device.headerProtection.key[:]))
+		if key := device.headerProtection.key.Load(); key != nil && !key.IsZero() {
+			sendf("header_protection_key=%s", hex.EncodeToString(key[:]))
 		}
-		device.headerProtection.RUnlock()
 
 		if addition := device.contentPaddingAddition.Load(); !addition.IsZero() {
 			sendf("content_padding_addition=%s", addition.ToString())
@@ -480,9 +478,9 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to set header_protection_key: %w", err)
 		}
-		device.headerProtection.Lock()
-		device.headerProtection.key = key
-		device.headerProtection.Unlock()
+		k := new(HeaderCipherKey)
+		*k = key
+		device.headerProtection.key.Store(k)
 
 	case "content_padding_addition":
 		var r UintRange

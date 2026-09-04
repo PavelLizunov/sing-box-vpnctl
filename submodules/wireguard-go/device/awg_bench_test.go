@@ -28,7 +28,9 @@ func BenchmarkHeaderProtectionCipher(b *testing.B) {
 	for i := range key {
 		key[i] = byte(i)
 	}
-	dev.headerProtection.key = key
+	k := new(HeaderCipherKey)
+	*k = key
+	dev.headerProtection.key.Store(k)
 	salt := make([]byte, HeaderCipherNonceSize)
 
 	b.ResetTimer()
