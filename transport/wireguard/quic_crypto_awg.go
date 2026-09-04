@@ -35,17 +35,47 @@ var quicSaltV1 = []byte{
 	0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a,
 }
 
+var (
+	hkdfLabelClientIn = []byte{0x00, 0x20, 0x0f, 't', 'l', 's', '1', '3', ' ', 'c', 'l', 'i', 'e', 'n', 't', ' ', 'i', 'n', 0x00}
+	hkdfLabelQuicKey  = []byte{0x00, 0x10, 0x0e, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'k', 'e', 'y', 0x00}
+	hkdfLabelQuicIV   = []byte{0x00, 0x0c, 0x0d, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'i', 'v', 0x00}
+	hkdfLabelQuicHP   = []byte{0x00, 0x10, 0x0d, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'h', 'p', 0x00}
+)
+
 // quicHKDFExpandLabel is HKDF-Expand-Label (RFC 8446 §7.1) with the "tls13 "
 // label prefix. Identical to qtls.HKDFExpandLabel.
 func quicHKDFExpandLabel(hash crypto.Hash, secret, context []byte, label string, length int) []byte {
-	b := make([]byte, 3, 3+6+len(label)+1+len(context))
-	binary.BigEndian.PutUint16(b, uint16(length))
-	b[2] = uint8(6 + len(label))
-	b = append(b, []byte("tls13 ")...)
-	b = append(b, []byte(label)...)
-	b = b[:3+6+len(label)+1]
-	b[3+6+len(label)] = uint8(len(context))
-	b = append(b, context...)
+	var b []byte
+	if len(context) == 0 {
+		switch label {
+		case "client in":
+			if length == 32 {
+				b = hkdfLabelClientIn
+			}
+		case "quic key":
+			if length == 16 {
+				b = hkdfLabelQuicKey
+			}
+		case "quic iv":
+			if length == 12 {
+				b = hkdfLabelQuicIV
+			}
+		case "quic hp":
+			if length == 16 {
+				b = hkdfLabelQuicHP
+			}
+		}
+	}
+	if b == nil {
+		b = make([]byte, 3, 3+6+len(label)+1+len(context))
+		binary.BigEndian.PutUint16(b, uint16(length))
+		b[2] = uint8(6 + len(label))
+		b = append(b, []byte("tls13 ")...)
+		b = append(b, []byte(label)...)
+		b = b[:3+6+len(label)+1]
+		b[3+6+len(label)] = uint8(len(context))
+		b = append(b, context...)
+	}
 	out := make([]byte, length)
 	n, err := hkdf.Expand(hash.New, secret, b).Read(out)
 	if err != nil || n != length {
