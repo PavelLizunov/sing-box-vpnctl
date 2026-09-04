@@ -120,7 +120,14 @@ func watchDialContext(ctx context.Context, done <-chan struct{}, onCancel func(e
 	go func() {
 		select {
 		case <-ctx.Done():
-			onCancel(ctx.Err())
+			select {
+			case <-done:
+				return
+			case <-stop:
+				return
+			default:
+				onCancel(ctx.Err())
+			}
 		case <-done:
 		case <-stop:
 		}
