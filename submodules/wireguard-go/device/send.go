@@ -11,7 +11,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"net/netip"
 	"os"
@@ -217,10 +216,15 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	jc := peer.device.junk.count
 	jmin := peer.device.junk.min
 	jmax := peer.device.junk.max
+	diff := uint32(jmax - jmin + 1)
 
 	for i := 0; i < jc; i++ {
-		nBig, _ := rand.Int(rand.Reader, big.NewInt(int64(jmax-jmin+1)))
-		n := int(nBig.Int64()) + jmin
+		var n int
+		if diff > 0 {
+			n = jmin + int(fastrandn(diff))
+		} else {
+			n = jmin
+		}
 
 		buf := make([]byte, n)
 		rand.Read(buf)
@@ -878,9 +882,7 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 			dataSent = true
 		}
 		if padding := device.paddings.transport; padding > 0 {
-			for i := len(elem.packet) - 1; i >= 0; i-- {
-				elem.buffer[i+padding] = elem.buffer[i]
-			}
+			copy(elem.buffer[padding:], elem.packet)
 			rand.Read(elem.buffer[:padding])
 			elem.packet = elem.buffer[:padding+len(elem.packet)]
 		}

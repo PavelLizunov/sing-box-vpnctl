@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unsafe"
 
 	"golang.org/x/net/http2/hpack"
 )
@@ -45,11 +46,7 @@ func (c *Client) applyXPadding(request *http.Request) {
 			return
 		}
 		pad := strings.Repeat("0", n)
-		referer := &url.URL{Scheme: c.scheme, Host: c.host, Path: request.URL.Path}
-		rq := referer.Query()
-		rq.Set("x_padding", pad)
-		referer.RawQuery = rq.Encode()
-		request.Header.Set("Referer", referer.String())
+		request.Header.Set("Referer", c.scheme+"://"+c.host+request.URL.Path+"?x_padding="+pad)
 		return
 	}
 	pad := c.generatePadding()
@@ -107,21 +104,20 @@ func generateTokenishPaddingBase62(target int) string {
 	if initialLen < 1 {
 		initialLen = 1
 	}
-	buf := make([]byte, initialLen)
-	randBuf := make([]byte, initialLen)
-	if _, err := cryptorand.Read(randBuf); err != nil {
+	buf := make([]byte, initialLen, initialLen+8)
+	if _, err := cryptorand.Read(buf); err != nil {
 		// crypto/rand should not fail; degrade to math/rand jitter rather than panic.
-		for i := range randBuf {
-			randBuf[i] = byte(randIntn(256))
+		for i := range buf {
+			buf[i] = byte(randIntn(256))
 		}
 	}
 	for i := range buf {
-		buf[i] = base62Alphabet[int(randBuf[i])%len(base62Alphabet)]
+		buf[i] = base62Alphabet[int(buf[i])%len(base62Alphabet)]
 	}
 
 	const maxIter = 150
 	for iter := 0; iter < maxIter; iter++ {
-		encoded := int(hpack.HuffmanEncodeLength(string(buf)))
+		encoded := int(hpack.HuffmanEncodeLength(unsafe.String(unsafe.SliceData(buf), len(buf))))
 		switch {
 		case encoded < target-2:
 			// too short: append an incompressible filler byte.
