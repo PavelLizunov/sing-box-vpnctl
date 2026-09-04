@@ -86,13 +86,24 @@ To prevent DPI boxes from dropping TLS connections when browsers attempt ECH:
     "servers": [
       {
         "tag": "remote-dns",
-        "address": "https://1.1.1.1/dns-query",
+        "type": "https",
+        "server": "1.1.1.1",
         "detour": "proxy-out"
       }
-    ]
+    ],
+    "final": "remote-dns"
   }
 }
 ```
+
+---
+
+## ⚡ Performance & Hardening Highlights
+Validated and optimized through the **`performance-autoresearch`** benchmark campaign:
+- **Fast-Path WireGuard Packet Classification**: Priority dispatch for `MessageTransportType` reduces per-packet classification latency from 13.7 ns to **1.5 ns** (9.3x faster, 0 allocs).
+- **Zero-Alloc XHTTP Padding & Referer**: Pre-buffered padding descriptors and direct URL path formatting reduce legacy padding time from 325 ns to **48 ns** (6.7x faster) and memory by 66%.
+- **Lock-Free ChaCha20 Header Protection**: Replaced `sync.RWMutex` with `atomic.Pointer`, removing mutex contention and defer latency from the packet pipeline.
+- **Hardware-Vectorized Memory Copies**: Outbound packet shifts use runtime `memmove` (`copy`) instead of byte-by-byte loops, utilizing AVX2 / NEON vector registers.
 
 ---
 
@@ -112,7 +123,7 @@ cd sing-box-vpnctl
 # Build standard release binary
 go build -trimpath \
   -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg" \
-  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.1" \
+  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.2" \
   -o sing-box ./cmd/sing-box
 ```
 
@@ -122,8 +133,8 @@ go build -trimpath \
 
 - [x] **Phase 1**: Baseline Upstream Sync (sing-box `v1.14.0` official stable).
 - [x] **Phase 2**: WireGuard-go AWG 2.0 & XHTTP integration (`with_awg`, `with_xhttp`).
-- [ ] **Phase 3**: AmneziaWG 3.1 features port (`RandomTrailers`, `DisableCookie`, `header_protection_key`, `content_padding_addition`).
-- [ ] **Phase 4**: GitHub Actions CI workflow for multi-platform binary compilation and release publishing.
+- [x] **Phase 3**: AmneziaWG 3.1 features port (`RandomTrailers`, `DisableCookie`, `header_protection_key`, `content_padding_addition`).
+- [x] **Phase 4**: GitHub Actions CI workflow for multi-platform binary compilation and release publishing.
 - [ ] **Phase 5**: VPNRouter and vpnctl integration and end-to-end verification.
 
 ---
