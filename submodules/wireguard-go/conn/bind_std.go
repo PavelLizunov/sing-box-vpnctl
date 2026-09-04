@@ -384,7 +384,9 @@ func (s *StdNetBind) receiveIP(
 			continue
 		}
 		if msg.N > 3 {
-			common.ClearArray(bufs[i][1:4])
+			if _, resvLoaded := s.reservedForEndpoint[M.AddrPortFromNet(msg.Addr)]; resvLoaded {
+				common.ClearArray(bufs[i][1:4])
+			}
 		}
 		ep := &StdNetEndpoint{AddrPort: M.AddrPortFromNet(msg.Addr)} // TODO: remove allocation
 		getSrcFromControl(msg.OOB[:msg.NN], ep)
