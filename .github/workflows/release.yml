@@ -1,0 +1,339 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.14.0-vpnctl.1)'
+        required: true
+        default: 'v1.14.0-vpnctl.1'
+
+permissions:
+  contents: write
+
+env:
+  DEFAULT_TAGS: "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg"
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. Build Windows Binaries (amd64, arm64)
+  # --------------------------------------------------------------------------
+  build-windows:
+    name: Build Windows (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: amd64, asset: windows-amd64 }
+          - { goarch: arm64, asset: windows-arm64 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Resolve Version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -tags "$DEFAULT_TAGS" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}" \
+            -o dist/sing-box.exe ./cmd/sing-box
+
+      - name: Package ZIP
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
+          mkdir -p "pkg/$NAME"
+          cp dist/sing-box.exe "pkg/$NAME/"
+          cp LICENSE README.md "pkg/$NAME/" 2>/dev/null || true
+          cd pkg
+          zip -r "../dist/$NAME.zip" "$NAME"
+          cd ..
+          rm -rf pkg
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.goarch }}
+          path: dist/*.zip
+
+  # --------------------------------------------------------------------------
+  # 2. Build Linux Binaries (amd64, arm64, armv7)
+  # --------------------------------------------------------------------------
+  build-linux:
+    name: Build Linux (${{ matrix.asset }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goarch: amd64, goarm: "", asset: linux-amd64 }
+          - { goarch: arm64, goarm: "", asset: linux-arm64 }
+          - { goarch: arm, goarm: "7", asset: linux-armv7 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Resolve Version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -tags "$DEFAULT_TAGS" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}" \
+            -o dist/sing-box ./cmd/sing-box
+
+      - name: Package Tarball
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-${{ matrix.asset }}"
+          mkdir -p "pkg/$NAME"
+          cp dist/sing-box "pkg/$NAME/"
+          cp LICENSE README.md "pkg/$NAME/" 2>/dev/null || true
+          tar -czf "dist/$NAME.tar.gz" -C pkg "$NAME"
+          rm -rf pkg
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*.tar.gz
+
+  # --------------------------------------------------------------------------
+  # 3. Build macOS Universal Binary (amd64 + arm64 lipo)
+  # --------------------------------------------------------------------------
+  build-darwin:
+    name: Build macOS (Universal)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Resolve Version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build macOS amd64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go build -trimpath \
+            -tags "$DEFAULT_TAGS" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}" \
+            -o dist/sing-box-amd64 ./cmd/sing-box
+
+      - name: Build macOS arm64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+          GOARCH: arm64
+        run: |
+          go build -trimpath \
+            -tags "$DEFAULT_TAGS" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=${{ steps.ver.outputs.version }}" \
+            -o dist/sing-box-arm64 ./cmd/sing-box
+
+      - name: Create Universal Binary
+        run: |
+          lipo -create -output dist/sing-box dist/sing-box-amd64 dist/sing-box-arm64
+          rm dist/sing-box-amd64 dist/sing-box-arm64
+          file dist/sing-box
+
+      - name: Package Archives
+        run: |
+          NAME="sing-box-${{ steps.ver.outputs.version }}-darwin-universal"
+          mkdir -p "pkg/$NAME"
+          cp dist/sing-box "pkg/$NAME/"
+          cp LICENSE README.md "pkg/$NAME/" 2>/dev/null || true
+          tar -czf "dist/$NAME.tar.gz" -C pkg "$NAME"
+          cd pkg
+          zip -r "../dist/$NAME.zip" "$NAME"
+          cd ..
+          rm -rf pkg
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: darwin-universal
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  # --------------------------------------------------------------------------
+  # 4. Build Android AAR (gomobile with_clash_api + with_awg + with_xhttp)
+  # --------------------------------------------------------------------------
+  build-android:
+    name: Build Android (libbox.aar)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Setup OpenJDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r28
+
+      - name: Resolve Version
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          git tag "$TAG" -f 2>/dev/null || true
+
+      - name: Install gomobile tools
+        run: |
+          make lib_install
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build libbox.aar
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          make lib_android
+
+      - name: Stage AAR Artifacts
+        run: |
+          mkdir -p dist
+          V="${{ steps.ver.outputs.version }}"
+          cp libbox.aar "dist/libbox-${V}.aar"
+          cp libbox.aar "dist/libbox.aar"
+          if [ -f libbox-legacy.aar ]; then
+            cp libbox-legacy.aar "dist/libbox-legacy-${V}.aar"
+            cp libbox-legacy.aar "dist/libbox-legacy.aar"
+          fi
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-aar
+          path: dist/*.aar
+
+  # --------------------------------------------------------------------------
+  # 5. Publish GitHub Release
+  # --------------------------------------------------------------------------
+  publish:
+    name: Publish Release
+    needs:
+      - build-windows
+      - build-linux
+      - build-darwin
+      - build-android
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Tag
+        id: ver
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all built artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare Release Assets & Checksums
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.aar" \) -exec cp {} release-assets/ \;
+          cd release-assets
+          echo "=== Collected Release Assets ==="
+          ls -la
+          echo "=== Generating Checksums ==="
+          sha256sum * > SHA256SUMS
+          for f in *; do
+            if [ "$f" != "SHA256SUMS" ]; then
+              sha256sum "$f" > "${f}.sha256"
+            fi
+          done
+          cat SHA256SUMS
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ver.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists, uploading new assets..."
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            echo "Creating new release $TAG..."
+            gh release create "$TAG" \
+              release-assets/* \
+              --title "sing-box-vpnctl ${TAG}" \
+              --generate-notes
+          fi
