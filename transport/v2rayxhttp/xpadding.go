@@ -73,7 +73,12 @@ func (c *Client) applyXPadding(request *http.Request) {
 	}
 	switch m.xPaddingPlacement {
 	case placementCookie:
-		request.AddCookie(&http.Cookie{Name: m.xPaddingKey, Value: pad, Path: "/"})
+		s := m.xPaddingKey + "=" + pad
+		if cur := request.Header.Get("Cookie"); cur != "" {
+			request.Header.Set("Cookie", cur+"; "+s)
+		} else {
+			request.Header.Set("Cookie", s)
+		}
 	case placementHeader:
 		request.Header.Set(m.xPaddingHeader, pad)
 	case placementQuery:
