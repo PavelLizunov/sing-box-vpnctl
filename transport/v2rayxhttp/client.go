@@ -23,6 +23,8 @@ package v2rayxhttp
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"net"
@@ -333,16 +335,20 @@ func (c *Client) newSessionID() string {
 // the form an unconfigured Xray peer also produces.
 func newUUIDSessionID() string {
 	var b [16]byte
-	for i := range b {
-		b[i] = byte(rand.Intn(256))
-	}
-	const hexdigits = "0123456789abcdef"
-	var h [32]byte
-	for i, v := range b {
-		h[i*2] = hexdigits[v>>4]
-		h[i*2+1] = hexdigits[v&0x0f]
-	}
-	return string(h[0:8]) + "-" + string(h[8:12]) + "-" + string(h[12:16]) + "-" + string(h[16:20]) + "-" + string(h[20:32])
+	binary.LittleEndian.PutUint64(b[0:8], rand.Uint64())
+	binary.LittleEndian.PutUint64(b[8:16], rand.Uint64())
+
+	var buf [36]byte
+	hex.Encode(buf[0:8], b[0:4])
+	buf[8] = '-'
+	hex.Encode(buf[9:13], b[4:6])
+	buf[13] = '-'
+	hex.Encode(buf[14:18], b[6:8])
+	buf[18] = '-'
+	hex.Encode(buf[19:23], b[8:10])
+	buf[23] = '-'
+	hex.Encode(buf[24:36], b[10:16])
+	return string(buf[:])
 }
 
 // readCloser adapts a plain reader to io.ReadCloser for use as a request body
