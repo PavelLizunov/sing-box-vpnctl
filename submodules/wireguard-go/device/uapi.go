@@ -8,6 +8,7 @@ package device
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -479,7 +480,9 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to set header_protection_key: %w", err)
 		}
-		ipcDev.headerProtectionKey = key
+		device.headerProtection.Lock()
+		device.headerProtection.key = key
+		device.headerProtection.Unlock()
 
 	case "content_padding_addition":
 		var r UintRange
@@ -717,7 +720,6 @@ func (device *Device) IpcHandle(socket net.Conn) {
 }
 
 type ipcSetDevice struct {
-	headerProtectionKey HeaderCipherKey
 	headers struct {
 		init      *magicHeader
 		response  *magicHeader
@@ -759,12 +761,6 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 	device.headers.response = d.headers.response
 	device.headers.cookie = d.headers.cookie
 	device.headers.transport = d.headers.transport
-
-	if !d.headerProtectionKey.IsZero() {
-		device.headerProtection.Lock()
-		device.headerProtection.key = d.headerProtectionKey
-		device.headerProtection.Unlock()
-	}
 
 	return nil
 }
