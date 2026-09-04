@@ -1,4 +1,4 @@
-# sing-box-core Delivery Roadmap
+# sing-box-vpnctl Delivery Roadmap
 
 ## Phase 1: Baseline Upstream Sync (sing-box 1.14.0)
 - [x] Add remote upstream: `https://github.com/SagerNet/sing-box.git`.
@@ -12,17 +12,19 @@
 - [x] Integrate 4 critical stability patches in-tree (H4 clear gate, OOB nil-guard, WSAENOBUFS retry, WARP reserved guard).
 - [x] Verify clean compilation and config validation on Go 1.26.
 
-## Phase 3: AmneziaWG 3.1 Extensions
-- [ ] Port `RandomTrailers` implementation from `amnezia-vpn/amneziawg-go` (commit `1f50ad73`).
+## Phase 3: AmneziaWG 3.1 & Anti-Censorship DNS
+- [ ] Port `RandomTrailers` implementation from `amnezia-vpn/amneziawg-go`.
 - [ ] Port `DisableCookie` implementation.
-- [ ] Update config schema for AWG 3.1 parameters.
+- [ ] Update config schema for AWG 3.1 parameters (`random_trailers`, `disable_cookies`, `header_protection_key`, `content_padding_addition`).
+- [ ] Validate DNS anti-censorship configurations (ECH/SVCB type 65 rejection, tunnel detour, FakeIP).
 
 ## Phase 4: Cross-Platform CI / Release Automation
 - [ ] Create `.github/workflows/release.yml`.
 - [ ] Build matrix for Windows, Linux, macOS, and Android (`libbox.aar`).
 - [ ] Automate `.sha256` checksum generation and release publishing.
 
-## Phase 5: VPNRouter End-to-End Migration
-- [ ] Update `VPNRouter/tools/build-singbox-lx.ps1` and build scripts to pull from `PavelLizunov/sing-box-core`.
+## Phase 5: VPNRouter and vpnctl Integration
+- [ ] Update VPNRouter build scripts to consume `PavelLizunov/sing-box-vpnctl`.
+- [ ] Integrate into vpnctl node provisioning.
 - [ ] Run full E2E verification on `WINBRAT` test VM (`100.115.182.0`).
 - [ ] Deprecate `Leadaxe/sing-box-lx` dependency.

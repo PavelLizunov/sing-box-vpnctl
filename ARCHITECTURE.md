@@ -1,31 +1,41 @@
-# sing-box-core Architecture Specification
+# sing-box-vpnctl Architecture Specification
 
-## 1. Upstream Foundation
-`sing-box-core` tracks the official release tags of **SagerNet/sing-box** (`https://github.com/SagerNet/sing-box.git`), starting with **v1.14.0** (commit `0b8995879f29a9b98ee027bc17b75e101445b238`).
+## 1. Foundation & Maintenance Model
+`sing-box-vpnctl` is a hardened, additive distribution tracking official release tags of **SagerNet/sing-box** (`https://github.com/SagerNet/sing-box.git`), starting with **v1.14.0** (commit `0b8995879f29a9b98ee027bc17b75e101445b238`).
 
-### Core Branches
-- `upstream-release`: Clean tracking branch of official `SagerNet/sing-box` release tags.
-- `main`: Canonical production branch with AmneziaWG (2.0 & 3.1) and XHTTP integration.
-- `release/*`: Tagged release cuts.
+### Design Philosophy
+- **Clean Baseline Tracking**: Maintain strict ancestry from official upstream tags. No divergence or rewriting of upstream interfaces.
+- **Additive Extension Layer**: All custom features (XHTTP, AmneziaWG, Anti-Censorship DNS) attach cleanly behind modular interfaces and build tags.
+- **Zero Build-Time Monkey Patching**: In-tree submodules contain all stability patches so clean `go build` works out of the box on all operating systems.
 
 ---
 
-## 2. Downstream Patch Layer
+## 2. Core Subsystems
 
-### A. WireGuard / AmneziaWG Obfuscation (`with_awg`)
-Upstream sing-box uses `golang.zx2c4.com/wireguard` and `sagernet/wireguard-go`.
-In `sing-box-core`, the WireGuard outbound routes through `wireguard-go-awg`:
-- Obfuscated packet framing in `device/send.go` and `device/receive.go`.
-- UAPI handshake parameter parser for `Jc`, `Jmin`, `Jmax`, `S1`, `S2`, `H1`, `H2`, `H3`, `H4`.
-- AmneziaWG 3.1 extensions:
-  - `RandomTrailers`: Appends random entropy bytes to data packets.
-  - `DisableCookie`: Disables cookie reply packets on handshake.
+### A. WireGuard / AmneziaWG Engine (`with_awg`)
+The in-tree `submodules/wireguard-go` is rebased on `sagernet/wireguard-go@8bd032a`, preserving all sing-box 1.14.0 internal features (`InputPackets`, `SetSinglePeerMode`, `SetEgressProvider`, `SetIOActivityFuncs`, `AllowedIPs.LookupFromPacket`).
+- **AmneziaWG 2.0**: Handshake and packet framing obfuscation (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5` CPS, domain masquerade).
+- **AmneziaWG 3.1 Extensions**: `RandomTrailers`, `DisableCookie`, `header_protection_key`, `content_padding_addition`.
+- **In-Tree Stability Patches**:
+  - H4 reserved-byte receive-clear gate (prevents packet misclassification in AWG transport).
+  - OOB nil-guard (`golang/go#77875`).
+  - Send retry on `WSAENOBUFS` (10055 on Windows).
+  - `ClientBind` WARP reserved byte preservation for AWG magic headers.
 
-### B. Xray HTTP Transport (`with_xhttp`)
-Ported from official XHTTP specifications to enable next-generation CDN/proxy multiplexing over HTTP/2 and HTTP/3.
+### B. XHTTP Transport Layer (`with_xhttp`)
+Modular client transport implemented in `transport/v2rayxhttp` and registered via `transport/v2ray/registry.go`:
+- **Modes**: `auto`, `packet-up`, `stream-up`, `stream-one`.
+- **Circuit Breaker (SPEC 076)**: Prevents CPU spinning upon hostile CDN resets.
+- **Graceful GOAWAY Retries**: Replayable request bodies for transparent session survival.
+- **Pool Hygiene (SPEC 059)**: Accurate tracking of pooled connections under load.
 
-### C. Clash API Integrity
-`sing-box-core` guarantees `with_clash_api` support on all targets, including Android `libbox.aar`. The endpoint `/traffic`, `/connections`, and `/proxies` are retained and authenticated via secret token.
+### C. Censorship-Resistant DNS Subsystem
+- **Anti-ECH Protection**: Filtering `query_type: ["HTTPS", "SVCB"]` to mitigate ISP/TSPU RST resets on Cloudflare domains.
+- **Strict Tunnel DNS**: Decoupling DNS resolution from the local network via proxy detours.
+- **FakeIP Engine**: Instant synthetic IP allocation (198.18.0.0/15) bypassing local DNS filtering.
+
+### D. Clash API Integrity
+Authenticated HTTP Clash API (`experimental.clash_api`) is preserved across all targets, including Android `libbox.aar`.
 
 ---
 
