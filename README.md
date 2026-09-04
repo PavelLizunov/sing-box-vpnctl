@@ -22,7 +22,10 @@
    - **Zero-Leak Tunnel DNS (Detour)**: enforces complete DNS encapsulation inside proxy tunnels, keeping physical WAN free of inspectable DNS queries.
    - **Fast FakeIP Resolver**: immediate synthetic IP mapping (198.18.0.0/15) avoiding DNS blocking altogether.
    - **Optimistic Caching & Parallel Queries**: sing-box 1.14 optimistic cache with parallel resolver racing.
-4. **Guaranteed Clash API Compatibility**: Preserves authenticated HTTP Clash API endpoints across all platforms, including mobile Android (`libbox.aar`), avoiding proprietary gRPC locks.
+4. **Guaranteed Clash API & V2Ray Stats API**:
+   - Preserves authenticated HTTP Clash API endpoints (`/traffic`, `/connections`, `/proxies`) across all platforms including mobile Android (`libbox.aar`).
+   - In `/connections`, metadata includes `"user"` string for live per-client visibility in web panels.
+   - Includes native gRPC V2Ray Stats service (`with_v2ray_api`) for cumulative, crash-proof traffic accounting on server nodes (`vpnctl`).
 5. **Independent Supply Chain**: Fully decoupled from third-party forks (`Leadaxe/sing-box-lx`), building reproducible signed binaries and AAR packages directly from our verified GitHub Actions CI.
 
 ---
@@ -31,10 +34,10 @@
 
 | Platform | Target Architecture | Binary / Artifact | Build Tags |
 | :--- | :--- | :--- | :--- |
-| **Windows** | `amd64`, `arm64` | `sing-box.exe` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
-| **Linux** | `amd64`, `arm64`, `armv7` | `sing-box` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
-| **macOS** | Universal (`amd64` + `arm64`) | `sing-box` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
-| **Android** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | `libbox.aar` | gomobile bundle with `with_clash_api,with_awg,with_xhttp` |
+| **Windows** | `amd64`, `arm64` | `sing-box.exe` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
+| **Linux** | `amd64`, `arm64`, `armv7` | `sing-box` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
+| **macOS** | Universal (`amd64` + `arm64`) | `sing-box` | `with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,with_xhttp,with_awg` |
+| **Android** | `arm64-v8a`, `armeabi-v7a`, `x86_64` | `libbox.aar` | gomobile bundle with `with_clash_api,with_v2ray_api,with_awg,with_xhttp` |
 
 ---
 
@@ -122,8 +125,8 @@ cd sing-box-vpnctl
 
 # Build standard release binary
 go build -trimpath \
-  -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg" \
-  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.2" \
+  -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg" \
+  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.3" \
   -o sing-box ./cmd/sing-box
 ```
 

@@ -39,8 +39,9 @@ Modular client transport implemented in `transport/v2rayxhttp` and registered vi
 - **Strict Tunnel DNS**: Decoupling DNS resolution from the local network via proxy detours.
 - **FakeIP Engine**: Instant synthetic IP allocation (198.18.0.0/15) bypassing local DNS filtering.
 
-### D. Clash API Integrity
-Authenticated HTTP Clash API (`experimental.clash_api`) is preserved across all targets, including Android `libbox.aar`.
+### D. Clash API Integrity & V2Ray Stats API (`with_v2ray_api`)
+- **Clash API**: Authenticated HTTP Clash API (`experimental.clash_api`) is preserved across all targets, including Android `libbox.aar`. In addition, `/connections` emits `"user"` in the connection metadata, allowing web interfaces (such as `vpnctl`) to attribute active sessions to specific users.
+- **V2Ray Stats API**: Native gRPC StatsService (`with_v2ray_api`) enabled across all server and desktop builds, supporting cumulative traffic counters per inbound/user.
 
 ---
 
