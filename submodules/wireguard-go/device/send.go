@@ -887,14 +887,26 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 			elem.packet = elem.buffer[:padding+len(elem.packet)]
 		}
 		if padAdd := elem.peer.randomPaddingAddition(len(elem.packet)); padAdd > 0 {
-			padBuf := make([]byte, padAdd)
-			rand.Read(padBuf)
-			elem.packet = append(elem.packet, padBuf...)
+			start := len(elem.packet)
+			if cap(elem.packet) >= start+padAdd {
+				elem.packet = elem.packet[:start+padAdd]
+				rand.Read(elem.packet[start:])
+			} else {
+				padBuf := make([]byte, padAdd)
+				rand.Read(padBuf)
+				elem.packet = append(elem.packet, padBuf...)
+			}
 		}
 		if trailerLen := elem.peer.randomTrailer(len(elem.packet)); trailerLen > 0 {
-			trailer := make([]byte, trailerLen)
-			rand.Read(trailer)
-			elem.packet = append(elem.packet, trailer...)
+			start := len(elem.packet)
+			if cap(elem.packet) >= start+trailerLen {
+				elem.packet = elem.packet[:start+trailerLen]
+				rand.Read(elem.packet[start:])
+			} else {
+				trailer := make([]byte, trailerLen)
+				rand.Read(trailer)
+				elem.packet = append(elem.packet, trailer...)
+			}
 		}
 		scratch = append(scratch, elem.packet)
 	}
