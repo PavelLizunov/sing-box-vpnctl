@@ -9,6 +9,10 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -75,4 +79,102 @@ func (key NoisePublicKey) Equals(tar NoisePublicKey) bool {
 
 func (key *NoisePresharedKey) FromHex(src string) error {
 	return loadExactHex(key[:], src)
+}
+
+const (
+	HeaderCipherKeySize   = 32
+	HeaderCipherNonceSize = 12
+)
+
+type HeaderCipherKey [HeaderCipherKeySize]byte
+
+func (key HeaderCipherKey) IsZero() bool {
+	var zero HeaderCipherKey
+	return key.Equals(zero)
+}
+
+func (key HeaderCipherKey) Equals(tar HeaderCipherKey) bool {
+	return subtle.ConstantTimeCompare(key[:], tar[:]) == 1
+}
+
+func (key *HeaderCipherKey) FromHex(src string) error {
+	return loadExactHex(key[:], src)
+}
+
+type UintRange uint64
+
+func (r *UintRange) FromUint32(lo, hi uint32) {
+	*r = UintRange(uint64(hi)<<32 | uint64(lo))
+}
+
+func (r *UintRange) FromString(str string) error {
+	parts := strings.Split(str, "-")
+	if len(parts) < 1 || len(parts) > 2 {
+		return errors.New("wrong format")
+	}
+
+	lo, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil {
+		return err
+	}
+
+	hi := lo
+	if len(parts) > 1 {
+		hi, err = strconv.ParseUint(parts[1], 10, 32)
+		if err != nil {
+			return err
+		}
+	}
+
+	if hi < lo {
+		return errors.New("wrong range specified")
+	}
+
+	r.FromUint32(uint32(lo), uint32(hi))
+	return nil
+}
+
+func (r UintRange) Contains(num uint32) bool {
+	lo, hi := uint32(r), uint32(r>>32)
+	return lo <= num && num <= hi
+}
+
+func (r UintRange) IsZero() bool {
+	return r == 0
+}
+
+func (r UintRange) PickOne() uint32 {
+	lo, hi := uint32(r), uint32(r>>32)
+	if hi <= lo {
+		return lo
+	}
+	return lo + fastrandn(hi-lo+1)
+}
+
+func (r UintRange) ToString() string {
+	lo, hi := uint32(r), uint32(r>>32)
+	if lo == hi {
+		return fmt.Sprintf("%d", lo)
+	}
+	return fmt.Sprintf("%d-%d", lo, hi)
+}
+
+func (r UintRange) Lo() uint32 {
+	return uint32(r)
+}
+
+func (r UintRange) Hi() uint32 {
+	return uint32(r >> 32)
+}
+
+type AtomicUintRange struct {
+	v atomic.Uint64
+}
+
+func (a *AtomicUintRange) Load() UintRange {
+	return UintRange(a.v.Load())
+}
+
+func (a *AtomicUintRange) Store(r UintRange) {
+	a.v.Store(uint64(r))
 }

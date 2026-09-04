@@ -3,6 +3,8 @@
 package wireguard
 
 import (
+	"encoding/hex"
+	"strconv"
 	"strings"
 
 	"github.com/sagernet/sing-box/option"
@@ -109,6 +111,31 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeStr("i3", o.I3)
 	writeStr("i4", o.I4)
 	writeStr("i5", o.I5)
+
+	// AmneziaWG 3.1 extensions
+	writeBool := func(key string, value *bool) {
+		if value != nil {
+			b.WriteString("\n")
+			b.WriteString(key)
+			b.WriteString("=")
+			b.WriteString(strconv.FormatBool(*value))
+		}
+	}
+	if o.HeaderProtectionKey != "" {
+		keyBytes, err := hex.DecodeString(o.HeaderProtectionKey)
+		if err != nil || len(keyBytes) != 32 {
+			return "", E.New("amneziawg: header_protection_key must be a valid 64-character hex string (32 bytes)")
+		}
+		if o.S1 < 12 || o.S2 < 12 || o.S3 < 12 || o.S4 < 12 {
+			return "", E.New("amneziawg: s1..s4 must each be >= 12 bytes when header_protection_key is used")
+		}
+		writeStr("header_protection_key", o.HeaderProtectionKey)
+	}
+	writeStr("content_padding_addition", o.ContentPaddingAddition)
+	writeStr("rekey_after_time", o.RekeyAfterTime)
+	writeBool("random_trailers", o.RandomTrailers)
+	writeBool("disable_cookies", o.DisableCookie)
+
 	return b.String(), nil
 }
 

@@ -243,6 +243,17 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		packet = buf
 	}
 
+	if len(packet) > HeaderCipherNonceSize {
+		if cip, err := peer.device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
+			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
+		}
+	}
+	if trailerLen := peer.randomTrailer(len(packet)); trailerLen > 0 {
+		trailer := make([]byte, trailerLen)
+		rand.Read(trailer)
+		packet = append(packet, trailer...)
+	}
+
 	sendBuffer = append(sendBuffer, packet)
 
 	if len(candidates) > 0 {
@@ -295,6 +306,17 @@ func (peer *Peer) SendHandshakeResponse() error {
 		packet = buf
 	}
 
+	if len(packet) > HeaderCipherNonceSize {
+		if cip, err := peer.device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
+			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
+		}
+	}
+	if trailerLen := peer.randomTrailer(len(packet)); trailerLen > 0 {
+		trailer := make([]byte, trailerLen)
+		rand.Read(trailer)
+		packet = append(packet, trailer...)
+	}
+
 	// TODO: allocation could be avoided
 	err = peer.SendBuffers([][]byte{packet})
 	if err != nil {
@@ -330,6 +352,17 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 		rand.Read(buf[:padding])
 		copy(buf[padding:], packet)
 		packet = buf
+	}
+
+	if len(packet) > HeaderCipherNonceSize {
+		if cip, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
+			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
+		}
+	}
+	if trailerLen := device.randomTrailer(len(packet)); trailerLen > 0 {
+		trailer := make([]byte, trailerLen)
+		rand.Read(trailer)
+		packet = append(packet, trailer...)
 	}
 
 	// TODO: allocation could be avoided
@@ -851,6 +884,16 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 			rand.Read(elem.buffer[:padding])
 			elem.packet = elem.buffer[:padding+len(elem.packet)]
 		}
+		if padAdd := elem.peer.randomPaddingAddition(len(elem.packet)); padAdd > 0 {
+			padBuf := make([]byte, padAdd)
+			rand.Read(padBuf)
+			elem.packet = append(elem.packet, padBuf...)
+		}
+		if trailerLen := elem.peer.randomTrailer(len(elem.packet)); trailerLen > 0 {
+			trailer := make([]byte, trailerLen)
+			rand.Read(trailer)
+			elem.packet = append(elem.packet, trailer...)
+		}
 		scratch = append(scratch, elem.packet)
 	}
 
@@ -879,4 +922,42 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 	}
 
 	peer.keepKeyFreshSending()
+}
+
+func (device *Device) randomTrailer(packetSize int) int {
+	if !device.randomTrailers.Load() {
+		return 0
+	}
+	if DefaultUdpWindow <= packetSize {
+		return 0
+	}
+	return int(fastrandn(uint32(DefaultUdpWindow - packetSize)))
+}
+
+func (peer *Peer) randomTrailer(packetSize int) int {
+	if !peer.device.randomTrailers.Load() {
+		return 0
+	}
+	udpWindow := int(peer.udpWindow.Load())
+	if udpWindow <= packetSize {
+		return 0
+	}
+	return int(fastrandn(uint32(udpWindow - packetSize)))
+}
+
+func (peer *Peer) randomPaddingAddition(packetSize int) int {
+	addition := peer.device.contentPaddingAddition.Load()
+	if addition.IsZero() {
+		return 0
+	}
+	udpWindow := int(peer.udpWindow.Load())
+	if udpWindow <= packetSize {
+		return 0
+	}
+	add := int(addition.PickOne())
+	space := udpWindow - packetSize
+	if add > space {
+		add = space
+	}
+	return add
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/sagernet/wireguard-go/ratelimiter"
 	"github.com/sagernet/wireguard-go/rwcancel"
 	"github.com/sagernet/wireguard-go/tun"
+	"golang.org/x/crypto/chacha20"
 )
 
 type Device struct {
@@ -122,6 +123,15 @@ type Device struct {
 	}
 
 	ipackets [5]*obfChain
+
+	// AmneziaWG 3.1
+	headerProtection struct {
+		sync.RWMutex
+		key HeaderCipherKey
+	}
+	contentPaddingAddition AtomicUintRange
+	randomTrailers         atomic.Bool
+	disableCookies         atomic.Bool
 }
 
 // deviceState represents the state of a Device.
@@ -795,3 +805,15 @@ func (device *Device) BindClose() error {
 	device.net.Unlock()
 	return err
 }
+
+func (device *Device) HeaderProtectionCipher(salt []byte) (*chacha20.Cipher, error) {
+	device.headerProtection.RLock()
+	defer device.headerProtection.RUnlock()
+
+	if device.headerProtection.key.IsZero() {
+		return nil, nil
+	}
+
+	return chacha20.NewUnauthenticatedCipher(device.headerProtection.key[:], salt)
+}
+

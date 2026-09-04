@@ -153,6 +153,13 @@ type AmneziaWGOptions struct {
 	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=quic/dns/sip, optional for stun
 	Ip   string      `json:"ip,omitempty"` // masquerade protocol: quic | dns | stun | sip
 	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | firefox | curl (limited effect, see masque_awg.go)
+
+	// AmneziaWG 3.1 parameters
+	RandomTrailers         *bool  `json:"random_trailers,omitempty"`
+	DisableCookie          *bool  `json:"disable_cookies,omitempty"`
+	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
+	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
 }
 
 // IsSet reports whether any AmneziaWG obfuscation parameter has been

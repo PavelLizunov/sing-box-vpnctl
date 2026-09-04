@@ -147,6 +147,24 @@ func (device *Device) IpcGetOperation(w io.Writer) error {
 			}
 		}
 
+		if device.randomTrailers.Load() {
+			sendf("random_trailers=true")
+		}
+
+		if device.disableCookies.Load() {
+			sendf("disable_cookies=true")
+		}
+
+		device.headerProtection.RLock()
+		if !device.headerProtection.key.IsZero() {
+			sendf("header_protection_key=%s", hex.EncodeToString(device.headerProtection.key[:]))
+		}
+		device.headerProtection.RUnlock()
+
+		if addition := device.contentPaddingAddition.Load(); !addition.IsZero() {
+			sendf("content_padding_addition=%s", addition.ToString())
+		}
+
 		for _, peer := range device.peers.keyMap {
 			// Serialize peer state.
 			peer.handshake.mutex.RLock()
@@ -439,6 +457,38 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		}
 		device.ipackets[4] = chain
 
+	case "random_trailers":
+		val, err := strconv.ParseBool(value)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse random_trailers: %w", err)
+		}
+		device.log.Verbosef("UAPI: Updating random trailers")
+		device.randomTrailers.Store(val)
+
+	case "disable_cookies":
+		val, err := strconv.ParseBool(value)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse disable_cookies: %w", err)
+		}
+		device.log.Verbosef("UAPI: Updating disable cookies")
+		device.disableCookies.Store(val)
+
+	case "header_protection_key":
+		var key HeaderCipherKey
+		err := key.FromHex(value)
+		if err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to set header_protection_key: %w", err)
+		}
+		ipcDev.headerProtectionKey = key
+
+	case "content_padding_addition":
+		var r UintRange
+		if err := r.FromString(value); err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse content_padding_addition: %w", err)
+		}
+		device.log.Verbosef("UAPI: Updating content padding addition")
+		device.contentPaddingAddition.Store(r)
+
 	default:
 		return ipcErrorf(ipc.IpcErrorInvalid, "invalid UAPI device key: %v", key)
 	}
@@ -667,6 +717,7 @@ func (device *Device) IpcHandle(socket net.Conn) {
 }
 
 type ipcSetDevice struct {
+	headerProtectionKey HeaderCipherKey
 	headers struct {
 		init      *magicHeader
 		response  *magicHeader
@@ -708,6 +759,12 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 	device.headers.response = d.headers.response
 	device.headers.cookie = d.headers.cookie
 	device.headers.transport = d.headers.transport
+
+	if !d.headerProtectionKey.IsZero() {
+		device.headerProtection.Lock()
+		device.headerProtection.key = d.headerProtectionKey
+		device.headerProtection.Unlock()
+	}
 
 	return nil
 }

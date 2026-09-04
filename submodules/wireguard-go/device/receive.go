@@ -335,7 +335,7 @@ func (device *Device) RoutineHandshake(id int) {
 
 			// endpoints destination address is the source of the datagram
 
-			if device.IsUnderLoad() {
+			if !device.disableCookies.Load() && device.IsUnderLoad() {
 
 				// verify MAC2 field
 
@@ -588,14 +588,28 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 
 func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType uint32) (uint32, int) {
 	size := len(packet)
+	randomTrailers := device.randomTrailers.Load()
+
+	var typeHash [4]byte
+	if len(packet) >= HeaderCipherNonceSize {
+		if cip, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
+			cip.XORKeyStream(typeHash[:], typeHash[:])
+		}
+	}
+
+	applyTypeHash := func(h uint32) uint32 {
+		return h ^ binary.LittleEndian.Uint32(typeHash[:])
+	}
 
 	if expectedType == MessageUnknownType || expectedType == MessageInitiationType {
 		padding := device.paddings.init
 		header := device.headers.init
+		expectedSize := padding + MessageInitiationSize
 
-		if size == padding+MessageInitiationSize {
+		if size == expectedSize || (randomTrailers && size > expectedSize) {
 			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
+			val := applyTypeHash(binary.LittleEndian.Uint32(data))
+			if header.Validate(val) {
 				return MessageInitiationType, padding
 			}
 		}
@@ -604,10 +618,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageResponseType {
 		padding := device.paddings.response
 		header := device.headers.response
+		expectedSize := padding + MessageResponseSize
 
-		if size == padding+MessageResponseSize {
+		if size == expectedSize || (randomTrailers && size > expectedSize) {
 			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
+			val := applyTypeHash(binary.LittleEndian.Uint32(data))
+			if header.Validate(val) {
 				return MessageResponseType, padding
 			}
 		}
@@ -616,10 +632,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageCookieReplyType {
 		padding := device.paddings.cookie
 		header := device.headers.cookie
+		expectedSize := padding + MessageCookieReplySize
 
-		if size == padding+MessageCookieReplySize {
+		if size == expectedSize || (randomTrailers && size > expectedSize) {
 			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
+			val := applyTypeHash(binary.LittleEndian.Uint32(data))
+			if header.Validate(val) {
 				return MessageCookieReplyType, padding
 			}
 		}
@@ -628,10 +646,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageTransportType {
 		padding := device.paddings.transport
 		header := device.headers.transport
+		expectedSize := padding + MessageTransportHeaderSize
 
-		if size >= padding+MessageTransportHeaderSize {
+		if size >= expectedSize {
 			data := packet[padding:]
-			if header.Validate(binary.LittleEndian.Uint32(data)) {
+			val := applyTypeHash(binary.LittleEndian.Uint32(data))
+			if header.Validate(val) {
 				return MessageTransportType, padding
 			}
 		}
