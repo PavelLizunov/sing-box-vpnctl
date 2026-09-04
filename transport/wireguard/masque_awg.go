@@ -31,7 +31,6 @@ package wireguard
 
 import (
 	"encoding/hex"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -256,7 +255,7 @@ func normalizeMasqueBrowser(ib, proto string) (string, error) {
 // vendored newObfChain (which scans for <...> tokens and ignores text between
 // them) parses them unambiguously.
 type cpsBuilder struct {
-	parts []string
+	b strings.Builder
 }
 
 // addBytes appends a <b 0xHEX> static-bytes tag. No-op for an empty slice
@@ -265,7 +264,10 @@ func (c *cpsBuilder) addBytes(b []byte) {
 	if len(b) == 0 {
 		return
 	}
-	c.parts = append(c.parts, "<b 0x"+hex.EncodeToString(b)+">")
+	c.b.WriteString("<b 0x")
+	w := hex.NewEncoder(&c.b)
+	_, _ = w.Write(b)
+	c.b.WriteString(">")
 }
 
 // addRand appends a <r N> tag: N cryptographically-random bytes filled by the
@@ -274,7 +276,9 @@ func (c *cpsBuilder) addRand(n int) {
 	if n <= 0 {
 		return
 	}
-	c.parts = append(c.parts, fmt.Sprintf("<r %d>", n))
+	c.b.WriteString("<r ")
+	c.b.WriteString(strconv.Itoa(n))
+	c.b.WriteString(">")
 }
 
 // addRandChars appends a <rc N> tag: N random ASCII letters ([a-zA-Z]). Used
@@ -284,7 +288,9 @@ func (c *cpsBuilder) addRandChars(n int) {
 	if n <= 0 {
 		return
 	}
-	c.parts = append(c.parts, fmt.Sprintf("<rc %d>", n))
+	c.b.WriteString("<rc ")
+	c.b.WriteString(strconv.Itoa(n))
+	c.b.WriteString(">")
 }
 
 // addRandDigits appends a <rd N> tag: N random ASCII digits ([0-9]). Used for
@@ -293,11 +299,13 @@ func (c *cpsBuilder) addRandDigits(n int) {
 	if n <= 0 {
 		return
 	}
-	c.parts = append(c.parts, fmt.Sprintf("<rd %d>", n))
+	c.b.WriteString("<rd ")
+	c.b.WriteString(strconv.Itoa(n))
+	c.b.WriteString(">")
 }
 
 func (c *cpsBuilder) String() string {
-	return strings.Join(c.parts, "")
+	return c.b.String()
 }
 
 // ---------------------------------------------------------------------------
