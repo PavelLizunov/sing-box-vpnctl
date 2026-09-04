@@ -167,6 +167,46 @@ func TestAwgIpcLinesSIPExplicitI2Conflict(t *testing.T) {
 	require.Contains(t, err.Error(), "explicit i2 conflicts")
 }
 
+func TestAwg31IpcLines(t *testing.T) {
+	t.Parallel()
+	bTrue := true
+	lines, err := awgIpcLines(option.AmneziaWGOptions{
+		S1:                     20,
+		S2:                     20,
+		S3:                     20,
+		S4:                     20,
+		RandomTrailers:         &bTrue,
+		DisableCookie:          &bTrue,
+		HeaderProtectionKey:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ContentPaddingAddition: "10-50",
+		RekeyAfterTime:         "60-120",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "true", ipcValue(t, lines, "random_trailers"))
+	require.Equal(t, "true", ipcValue(t, lines, "disable_cookies"))
+	require.Equal(t, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", ipcValue(t, lines, "header_protection_key"))
+	require.Equal(t, "10-50", ipcValue(t, lines, "content_padding_addition"))
+	require.Equal(t, "60-120", ipcValue(t, lines, "rekey_after_time"))
+}
+
+func TestAwg31HeaderProtectionValidation(t *testing.T) {
+	t.Parallel()
+	// Invalid key length
+	_, err := awgIpcLines(option.AmneziaWGOptions{
+		HeaderProtectionKey: "abcd",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "header_protection_key must be a valid 64-character hex string")
+
+	// S1..S4 < 12
+	_, err = awgIpcLines(option.AmneziaWGOptions{
+		S1:                  10,
+		HeaderProtectionKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "s1..s4 must each be >= 12 bytes")
+}
+
 // ipcValue extracts the value of a "\nkey=value" line from awgIpcLines output,
 // or "" if absent.
 func ipcValue(t *testing.T, lines, key string) string {
