@@ -21,3 +21,31 @@ func BenchmarkDeterminePacketTypeAndPadding(b *testing.B) {
 		_, _ = dev.DeterminePacketTypeAndPadding(packet, MessageUnknownType)
 	}
 }
+
+func BenchmarkHeaderProtectionCipher(b *testing.B) {
+	dev := &Device{}
+	var key HeaderCipherKey
+	for i := range key {
+		key[i] = byte(i)
+	}
+	dev.headerProtection.key = key
+	salt := make([]byte, HeaderCipherNonceSize)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = dev.HeaderProtectionCipher(salt)
+	}
+}
+
+func BenchmarkRandomTrailer(b *testing.B) {
+	dev := &Device{}
+	dev.randomTrailers.Store(true)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = dev.randomTrailer(100)
+	}
+}
+
