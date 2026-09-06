@@ -401,6 +401,9 @@ func (peer *Peer) SetEndpointFromPacket(endpoint conn.Endpoint) {
 	if peer.endpoint.disableRoaming {
 		return
 	}
+	if peer.endpoint.val == nil || peer.endpoint.val.DstToString() != endpoint.DstToString() {
+		peer.udpWindow.Store(DefaultUdpWindow)
+	}
 	peer.endpoint.clearSrcOnTx = false
 	peer.endpoint.val = endpoint
 }

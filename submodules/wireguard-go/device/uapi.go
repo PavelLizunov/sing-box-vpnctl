@@ -210,11 +210,17 @@ func (device *Device) IpcSetOperation(r io.Reader) (err error) {
 
 	defer func() {
 		if err != nil {
-			device.log.Errorf("%v", err)
+			// Parser errors may echo rejected configuration values, including
+			// accidentally misplaced key material. Never log their raw text.
+			device.log.Errorf("UAPI configuration rejected")
 		}
 	}()
 
 	ipcDev := new(ipcSetDevice)
+	device.wireMu.RLock()
+	ipcDev.paddings = device.paddings
+	ipcDev.headerProtectionKey = device.headerProtection.key.Load()
+	device.wireMu.RUnlock()
 	peer := new(ipcSetPeer)
 	deviceConfig := true
 
@@ -237,6 +243,11 @@ func (device *Device) IpcSetOperation(r io.Reader) (err error) {
 
 		if key == "public_key" {
 			if deviceConfig {
+				// All device lines precede peers. Install the validated framing
+				// state before an earlier peer's post-config can start traffic.
+				if err := ipcDev.mergeWithDevice(device); err != nil {
+					return ipcErrorf(ipc.IpcErrorInvalid, "failed to merge with device: %w", err)
+				}
 				deviceConfig = false
 			}
 			peer.handlePostConfig()
@@ -250,7 +261,7 @@ func (device *Device) IpcSetOperation(r io.Reader) (err error) {
 
 		var err error
 		if deviceConfig {
-			err = device.handleDeviceLine(key, value)
+			err = device.handleDeviceLine(ipcDev, key, value)
 		} else {
 			err = device.handlePeerLine(peer, key, value)
 		}
@@ -258,19 +269,18 @@ func (device *Device) IpcSetOperation(r io.Reader) (err error) {
 			return err
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return ipcErrorf(ipc.IpcErrorIO, "failed to read input: %w", err)
+	}
 	err = ipcDev.mergeWithDevice(device)
 	if err != nil {
 		return ipcErrorf(ipc.IpcErrorInvalid, "failed to merge with device: %w", err)
 	}
 	peer.handlePostConfig()
-
-	if err := scanner.Err(); err != nil {
-		return ipcErrorf(ipc.IpcErrorIO, "failed to read input: %w", err)
-	}
 	return nil
 }
 
-func (device *Device) handleDeviceLine(key, value string) error {
+func (device *Device) handleDeviceLine(ipcDev *ipcSetDevice, key, value string) error {
 	switch key {
 	case "private_key":
 		var sk NoisePrivateKey
@@ -358,7 +368,7 @@ func (device *Device) handleDeviceLine(key, value string) error {
 			return ipcErrorf(ipc.IpcErrorInvalid, "s1 must be non-negative")
 		}
 		device.log.Verbosef("UAPI: Updating s1 padding")
-		device.paddings.init = padding
+		ipcDev.paddings.init = padding
 
 	case "s2":
 		padding, err := strconv.Atoi(value)
@@ -369,7 +379,7 @@ func (device *Device) handleDeviceLine(key, value string) error {
 			return ipcErrorf(ipc.IpcErrorInvalid, "s2 must be non-negative")
 		}
 		device.log.Verbosef("UAPI: Updating s2 padding")
-		device.paddings.response = padding
+		ipcDev.paddings.response = padding
 
 	case "s3":
 		padding, err := strconv.Atoi(value)
@@ -380,7 +390,7 @@ func (device *Device) handleDeviceLine(key, value string) error {
 			return ipcErrorf(ipc.IpcErrorInvalid, "s3 must be non-negative")
 		}
 		device.log.Verbosef("UAPI: Updating s3 padding")
-		device.paddings.cookie = padding
+		ipcDev.paddings.cookie = padding
 
 	case "s4":
 		padding, err := strconv.Atoi(value)
@@ -391,35 +401,35 @@ func (device *Device) handleDeviceLine(key, value string) error {
 			return ipcErrorf(ipc.IpcErrorInvalid, "s4 must be non-negative")
 		}
 		device.log.Verbosef("UAPI: Updating s4 padding")
-		device.paddings.transport = padding
+		ipcDev.paddings.transport = padding
 
 	case "h1":
 		header, err := newMagicHeader(value)
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse H1: %w", err)
 		}
-		device.headers.init = header
+		ipcDev.headers.init = header
 
 	case "h2":
 		header, err := newMagicHeader(value)
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse H2: %w", err)
 		}
-		device.headers.response = header
+		ipcDev.headers.response = header
 
 	case "h3":
 		header, err := newMagicHeader(value)
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse H3: %w", err)
 		}
-		device.headers.cookie = header
+		ipcDev.headers.cookie = header
 
 	case "h4":
 		header, err := newMagicHeader(value)
 		if err != nil {
 			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse H4: %w", err)
 		}
-		device.headers.transport = header
+		ipcDev.headers.transport = header
 
 	case "i1":
 		chain, err := newObfChain(value)
@@ -480,7 +490,7 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		}
 		k := new(HeaderCipherKey)
 		*k = key
-		device.headerProtection.key.Store(k)
+		ipcDev.headerProtectionKey = k
 
 	case "content_padding_addition":
 		var r UintRange
@@ -718,7 +728,14 @@ func (device *Device) IpcHandle(socket net.Conn) {
 }
 
 type ipcSetDevice struct {
-	headers struct {
+	paddings struct {
+		init      int
+		response  int
+		cookie    int
+		transport int
+	}
+	headerProtectionKey *HeaderCipherKey
+	headers             struct {
 		init      *magicHeader
 		response  *magicHeader
 		cookie    *magicHeader
@@ -727,6 +744,19 @@ type ipcSetDevice struct {
 }
 
 func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
+	device.wireMu.Lock()
+	defer device.wireMu.Unlock()
+	protected := d.headerProtectionKey != nil && !d.headerProtectionKey.IsZero()
+	prefixes := []int{d.paddings.init, d.paddings.response, d.paddings.cookie, d.paddings.transport}
+	cores := []int{MessageInitiationSize, MessageResponseSize, MessageCookieReplySize, MessageTransportSize}
+	for i, prefix := range prefixes {
+		if _, valid := awgPacketSize(prefix, cores[i], 0); !valid {
+			return fmt.Errorf("S%d exceeds maximum packet size", i+1)
+		}
+		if protected && prefix < HeaderCipherNonceSize {
+			return fmt.Errorf("S%d must be at least %d for header protection", i+1, HeaderCipherNonceSize)
+		}
+	}
 	if d.headers.init == nil {
 		d.headers.init = device.headers.init
 	}
@@ -745,7 +775,13 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 
 	headers := []*magicHeader{d.headers.init, d.headers.response, d.headers.cookie, d.headers.transport}
 	for i := 0; i < len(headers); i++ {
+		if headers[i] == nil || uint64(headers[i].end)-uint64(headers[i].start)+1 == 1<<32 {
+			return errors.New("invalid or full-width message header range")
+		}
 		for j := i + 1; j < len(headers); j++ {
+			if headers[j] == nil {
+				return errors.New("missing message header")
+			}
 			left := headers[i]
 			right := headers[j]
 
@@ -759,6 +795,8 @@ func (d *ipcSetDevice) mergeWithDevice(device *Device) error {
 	device.headers.response = d.headers.response
 	device.headers.cookie = d.headers.cookie
 	device.headers.transport = d.headers.transport
+	device.paddings = d.paddings
+	device.headerProtection.key.Store(d.headerProtectionKey)
 
 	return nil
 }

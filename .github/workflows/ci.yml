@@ -27,6 +27,15 @@ jobs:
           go-version: '1.26.x'
           cache: true
 
+      - name: Test vendored WireGuard device (separate Go module)
+        working-directory: submodules/wireguard-go
+        run: |
+          go test -count=1 -timeout=180s ./device
+          go test -race -count=1 -timeout=240s ./device
+
+      - name: Test AWG transport integration
+        run: go test -tags "with_awg,with_wireguard,with_gvisor" -ldflags="-checklinkname=0" -count=1 -timeout=180s ./transport/wireguard
+
       - name: Compile sing-box with production tags
         run: |
           go build -v -trimpath \
@@ -75,7 +84,7 @@ jobs:
                 "h1": 12345678, "h2": 23456789, "h3": 34567890, "h4": 45678901,
                 "random_trailers": true, "disable_cookies": true,
                 "header_protection_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "content_padding_addition": "10-50", "rekey_after_time": "60-120"
+                "content_padding_addition": "10-50"
               }
             ],
             "outbounds": [
