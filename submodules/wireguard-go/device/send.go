@@ -18,6 +18,7 @@ import (
 
 	"github.com/sagernet/wireguard-go/conn"
 	"github.com/sagernet/wireguard-go/tun"
+	"golang.org/x/crypto/chacha20"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -51,12 +52,14 @@ type QueueOutboundElement struct {
 	buffer []byte // sing-allocated buffer holding the packet data
 	// packet is always a slice of "buffer". The starting offset in buffer
 	// is either:
-	//  a) MessageEncapsulatingTransportSize+MessageTransportHeaderSize (plaintext)
-	//  b) 0 (post-encryption)
-	packet  []byte
-	nonce   uint64   // nonce for encryption
-	keypair *Keypair // keypair for encryption
-	peer    *Peer    // related peer
+	//  a) MessageEncapsulatingTransportSize+MessageTransportHeaderSize (queued plaintext)
+	//  b) the configured prefix is inserted by encryptTransport before sealing
+	//  c) 0 (post-encryption)
+	packet      []byte
+	nonce       uint64   // nonce for encryption
+	keypair     *Keypair // keypair for encryption
+	peer        *Peer    // related peer
+	isKeepalive bool     // original plaintext was empty, before AWG padding
 }
 
 type QueueOutboundElementsContainer struct {
@@ -86,6 +89,7 @@ func (elem *QueueOutboundElement) clearPointers() {
 	elem.packet = nil
 	elem.keypair = nil
 	elem.peer = nil
+	elem.isKeepalive = false
 }
 
 /* Queues a keepalive if no packets are queued for peer
@@ -196,7 +200,8 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 
 	candidates := peer.resolveEndpoints()
 
-	msg, err := peer.device.CreateMessageInitiation(peer)
+	wireConfig := peer.device.handshakeWireConfig(MessageInitiationType)
+	msg, err := peer.device.createMessageInitiation(peer, wireConfig.header)
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to create initiation message: %v", peer, err)
 		return err
@@ -238,22 +243,9 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
-	if padding := peer.device.paddings.init; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
-	}
-
-	if len(packet) > HeaderCipherNonceSize {
-		if cip, err := peer.device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
-			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
-		}
-	}
-	if trailerLen := peer.randomTrailer(len(packet)); trailerLen > 0 {
-		trailer := make([]byte, trailerLen)
-		rand.Read(trailer)
-		packet = append(packet, trailer...)
+	packet, err = wireConfig.frameHandshake(packet, int(peer.udpWindow.Load()))
+	if err != nil {
+		return err
 	}
 
 	sendBuffer = append(sendBuffer, packet)
@@ -278,7 +270,8 @@ func (peer *Peer) SendHandshakeResponse() error {
 
 	peer.device.log.Verbosef("%v - Sending handshake response", peer)
 
-	response, err := peer.device.CreateMessageResponse(peer)
+	wireConfig := peer.device.handshakeWireConfig(MessageResponseType)
+	response, err := peer.device.createMessageResponse(peer, wireConfig.header)
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to create response message: %v", peer, err)
 		return err
@@ -299,22 +292,9 @@ func (peer *Peer) SendHandshakeResponse() error {
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
-	if padding := peer.device.paddings.response; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
-	}
-
-	if len(packet) > HeaderCipherNonceSize {
-		if cip, err := peer.device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
-			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
-		}
-	}
-	if trailerLen := peer.randomTrailer(len(packet)); trailerLen > 0 {
-		trailer := make([]byte, trailerLen)
-		rand.Read(trailer)
-		packet = append(packet, trailer...)
+	packet, err = wireConfig.frameHandshake(packet, int(peer.udpWindow.Load()))
+	if err != nil {
+		return err
 	}
 
 	// TODO: allocation could be avoided
@@ -329,13 +309,13 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	device.log.Verbosef("Sending cookie response for denied handshake message for %v", initiatingElem.endpoint.DstToString())
 
 	sender := binary.LittleEndian.Uint32(initiatingElem.packet[4:8])
-	msgType := device.headers.cookie.Generate()
+	wireConfig := device.handshakeWireConfig(MessageCookieReplyType)
 
 	reply, err := device.cookieChecker.CreateReply(
 		initiatingElem.packet,
 		sender,
 		initiatingElem.endpoint.DstToBytes(),
-		msgType,
+		wireConfig.header,
 	)
 	if err != nil {
 		device.log.Errorf("Failed to create cookie reply: %v", err)
@@ -346,28 +326,96 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	_ = reply.marshal(buf[:])
 	packet := buf[:]
 
-	if padding := device.paddings.cookie; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
-	}
-
-	if len(packet) > HeaderCipherNonceSize {
-		if cip, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
-			cip.XORKeyStream(packet[HeaderCipherNonceSize:], packet[HeaderCipherNonceSize:])
-		}
-	}
-	if trailerLen := device.randomTrailer(len(packet)); trailerLen > 0 {
-		trailer := make([]byte, trailerLen)
-		rand.Read(trailer)
-		packet = append(packet, trailer...)
+	packet, err = wireConfig.frameHandshake(packet, DefaultUdpWindow)
+	if err != nil {
+		return err
 	}
 
 	// TODO: allocation could be avoided
 	device.net.bind.Send([][]byte{packet}, initiatingElem.endpoint, 0)
 
 	return nil
+}
+
+// awgMaxPacketSize also respects the IPv4 UDP payload ceiling. MaxMessageSize
+// alone is a buffer limit, not a valid outer UDP payload length.
+const awgMaxPacketSize = min(MaxMessageSize, 65507)
+
+func awgPacketSize(prefix, content, overhead int) (int, bool) {
+	if prefix < 0 || content < 0 || overhead < 0 || overhead > awgMaxPacketSize || prefix > awgMaxPacketSize-overhead || content > awgMaxPacketSize-overhead-prefix {
+		return 0, false
+	}
+	return prefix + content + overhead, true
+}
+
+type handshakeWireConfig struct {
+	header         uint32
+	prefix, size   int
+	key            HeaderCipherKey
+	randomTrailers bool
+}
+
+// Snapshot H/S/HP before Noise creation. No wire lock is held while acquiring
+// identity, handshake, or cookie locks, and framing never reloads live state.
+func (device *Device) handshakeWireConfig(msgType uint32) handshakeWireConfig {
+	device.wireMu.RLock()
+	defer device.wireMu.RUnlock()
+	var config handshakeWireConfig
+	switch msgType {
+	case MessageInitiationType:
+		config.header = device.headers.init.Generate()
+		config.prefix, config.size = device.paddings.init, MessageInitiationSize
+	case MessageResponseType:
+		config.header = device.headers.response.Generate()
+		config.prefix, config.size = device.paddings.response, MessageResponseSize
+	case MessageCookieReplyType:
+		config.header = device.headers.cookie.Generate()
+		config.prefix, config.size = device.paddings.cookie, MessageCookieReplySize
+	}
+	if key := device.headerProtection.key.Load(); key != nil {
+		config.key = *key
+	}
+	config.randomTrailers = device.randomTrailers.Load()
+	return config
+}
+
+// frameHandshake implements the pinned AWG3 contract: clear random prefix,
+// protected fixed core, and an unprotected random trailer. The MACs are already
+// present in core. Never encrypt the unused suffix of the prefix.
+func (config handshakeWireConfig) frameHandshake(core []byte, window int) ([]byte, error) {
+	prefix, size := config.prefix, config.size
+	if size == 0 {
+		return nil, errors.New("invalid handshake type")
+	}
+	base, ok := awgPacketSize(prefix, size, 0)
+	if !ok || len(core) != size {
+		return nil, errors.New("invalid handshake size")
+	}
+	protected := !config.key.IsZero()
+	if protected && prefix < HeaderCipherNonceSize {
+		return nil, errors.New("header protection requires a nonce-sized prefix")
+	}
+	trailer := 0
+	window = min(window, awgMaxPacketSize)
+	if config.randomTrailers && window > base {
+		trailer = int(fastrandn(uint32(window - base)))
+	}
+	wire := make([]byte, base+trailer)
+	if _, err := rand.Read(wire[:prefix]); err != nil {
+		return nil, err
+	}
+	copy(wire[prefix:base], core)
+	if protected {
+		cipher, err := chacha20.NewUnauthenticatedCipher(config.key[:], wire[:HeaderCipherNonceSize])
+		if err != nil {
+			return nil, err
+		}
+		cipher.XORKeyStream(wire[prefix:base], wire[prefix:base])
+	}
+	if _, err := rand.Read(wire[base:]); err != nil {
+		return nil, err
+	}
+	return wire, nil
 }
 
 func (peer *Peer) keepKeyFreshSending() {
@@ -419,7 +467,7 @@ func (device *Device) RoutineReadFromTUN() {
 		// read packets
 		count, readErr = device.tun.device.Read(bufs, sizes, offset)
 		for i := 0; i < count; i++ {
-			if sizes[i] < 1 {
+			if sizes[i] < 1 || sizes[i] > len(bufs[i])-offset {
 				continue
 			}
 
@@ -555,6 +603,9 @@ func (device *Device) InputPacket(destination []byte, packetSlices [][]byte) {
 	}
 	var totalLength int
 	for _, packetSlice := range packetSlices {
+		if len(packetSlice) > awgMaxPacketSize-totalLength {
+			return
+		}
 		totalLength += len(packetSlice)
 	}
 	allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead
@@ -601,7 +652,14 @@ func (device *Device) InputPackets(packets []*InputPacketRef) []*InputPacketRef 
 		}
 		var totalLength int
 		for _, packetSlice := range packetRef.PacketSlices {
+			if len(packetSlice) > awgMaxPacketSize-totalLength {
+				totalLength = awgMaxPacketSize + 1
+				break
+			}
 			totalLength += len(packetSlice)
+		}
+		if totalLength > awgMaxPacketSize {
+			continue
 		}
 		allocLength := MessageEncapsulatingTransportSize + MessageTransportHeaderSize + totalLength + PaddingMultiple + chacha20poly1305.Overhead
 		if allocLength > MaxMessageSize {
@@ -771,46 +829,88 @@ func calculatePaddingSize(packetSize, mtu int) int {
  * Obs. One instance per core
  */
 func (device *Device) RoutineEncryption(id int) {
-	var paddingZeros [PaddingMultiple]byte
-	var nonce [chacha20poly1305.NonceSize]byte
-
 	defer device.log.Verbosef("Routine: encryption worker %d - stopped", id)
 	device.log.Verbosef("Routine: encryption worker %d - started", id)
 
 	for elemsContainer := range device.queue.encryption.c {
 		for _, elem := range elemsContainer.elems {
-			// populate header fields
-			header := elem.buffer[MessageEncapsulatingTransportSize : MessageEncapsulatingTransportSize+MessageTransportHeaderSize]
-
-			fieldType := header[0:4]
-			fieldReceiver := header[4:8]
-			fieldNonce := header[8:16]
-
-			msgType := device.headers.transport.Generate()
-
-			binary.LittleEndian.PutUint32(fieldType, msgType)
-			binary.LittleEndian.PutUint32(fieldReceiver, elem.keypair.remoteIndex)
-			binary.LittleEndian.PutUint64(fieldNonce, elem.nonce)
-
-			// pad content to multiple of 16
-			paddingSize := calculatePaddingSize(len(elem.packet), int(device.tun.mtu.Load()))
-			elem.packet = append(elem.packet, paddingZeros[:paddingSize]...)
-
-			// encrypt content and release to consumer
-
-			binary.LittleEndian.PutUint64(nonce[4:], elem.nonce)
-			elem.packet = elem.keypair.send.Seal(
-				header,
-				nonce[:],
-				elem.packet,
-				nil,
-			)
-
-			// re-slice packet to include encapsulating transport space
-			elem.packet = elem.buffer[:MessageEncapsulatingTransportSize+len(elem.packet)]
+			if err := device.encryptTransport(elem); err != nil {
+				elem.packet = nil
+				device.log.Verbosef("Dropped outbound packet: %v", err)
+			}
 		}
 		elemsContainer.filling.Done()
 	}
+}
+
+func (device *Device) encryptTransport(elem *QueueOutboundElement) error {
+	device.wireMu.RLock()
+	defer device.wireMu.RUnlock()
+	prefix := device.paddings.transport
+	length := len(elem.packet)
+	base, ok := awgPacketSize(prefix, length, MessageTransportSize)
+	if !ok {
+		return errors.New("transport exceeds maximum packet size")
+	}
+	key := device.headerProtection.key.Load()
+	protected := key != nil && !key.IsZero()
+	if protected && prefix < HeaderCipherNonceSize {
+		return errors.New("header protection requires a nonce-sized prefix")
+	}
+	for old := elem.peer.udpWindow.Load(); old < uint32(base); old = elem.peer.udpWindow.Load() {
+		if elem.peer.udpWindow.CompareAndSwap(old, uint32(base)) {
+			break
+		}
+	}
+	padding := elem.peer.randomPaddingAddition(base)
+	if padding < 0 {
+		padding = elem.peer.randomTrailer(base)
+	}
+	if padding < 0 {
+		padding = calculatePaddingSize(length, int(device.tun.mtu.Load()))
+	}
+	padding = min(padding, awgMaxPacketSize-base)
+	wireSize := base + padding
+	allocation := MessageEncapsulatingTransportSize + wireSize
+	if allocation > MaxMessageSize {
+		return errors.New("transport exceeds buffer size")
+	}
+	contentOffset := MessageEncapsulatingTransportSize + prefix + MessageTransportHeaderSize
+	// Injection buffers are intentionally small and sing-owned. Grow through the
+	// same allocator before moving plaintext; never let Seal detach its backing
+	// array from elem.buffer (the sender returns precisely that owned buffer).
+	if cap(elem.buffer) < allocation {
+		buffer := device.GetOutboundBuffer(allocation)
+		copy(buffer[contentOffset:], elem.packet)
+		device.PutOutboundBuffer(elem.buffer)
+		elem.buffer = buffer
+	} else {
+		elem.buffer = elem.buffer[:allocation]
+		copy(elem.buffer[contentOffset:], elem.packet)
+	}
+	elem.isKeepalive = length == 0
+	wire := elem.buffer[MessageEncapsulatingTransportSize:allocation]
+	if _, err := rand.Read(wire[:prefix]); err != nil {
+		return err
+	}
+	header := wire[prefix : prefix+MessageTransportHeaderSize]
+	binary.LittleEndian.PutUint32(header, device.headers.transport.Generate())
+	binary.LittleEndian.PutUint32(header[4:], elem.keypair.remoteIndex)
+	binary.LittleEndian.PutUint64(header[8:], elem.nonce)
+	plaintext := elem.buffer[contentOffset : contentOffset+length+padding]
+	clear(plaintext[length:])
+	var nonce [chacha20poly1305.NonceSize]byte
+	binary.LittleEndian.PutUint64(nonce[4:], elem.nonce)
+	elem.keypair.send.Seal(elem.buffer[:contentOffset], nonce[:], plaintext, nil)
+	if protected {
+		cipher, err := device.HeaderProtectionCipher(wire[:HeaderCipherNonceSize])
+		if err != nil {
+			return err
+		}
+		cipher.XORKeyStream(header, header)
+	}
+	elem.packet = elem.buffer[:allocation]
+	return nil
 }
 
 func (peer *Peer) RoutineSequentialSender(maxBatchSize int) {
@@ -873,43 +973,21 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 
 	dataSent := false
 	for _, elem := range elemsContainer.elems {
-		if len(elem.packet) != MessageKeepaliveSize {
+		if elem.packet == nil {
+			continue
+		}
+		if !elem.isKeepalive {
 			dataSent = true
-		}
-		if padding := device.paddings.transport; padding > 0 {
-			copy(elem.buffer[padding:], elem.packet)
-			rand.Read(elem.buffer[:padding])
-			elem.packet = elem.buffer[:padding+len(elem.packet)]
-		}
-		if padAdd := elem.peer.randomPaddingAddition(len(elem.packet)); padAdd > 0 {
-			start := len(elem.packet)
-			if cap(elem.packet) >= start+padAdd {
-				elem.packet = elem.packet[:start+padAdd]
-				rand.Read(elem.packet[start:])
-			} else {
-				padBuf := make([]byte, padAdd)
-				rand.Read(padBuf)
-				elem.packet = append(elem.packet, padBuf...)
-			}
-		}
-		if trailerLen := elem.peer.randomTrailer(len(elem.packet)); trailerLen > 0 {
-			start := len(elem.packet)
-			if cap(elem.packet) >= start+trailerLen {
-				elem.packet = elem.packet[:start+trailerLen]
-				rand.Read(elem.packet[start:])
-			} else {
-				trailer := make([]byte, trailerLen)
-				rand.Read(trailer)
-				elem.packet = append(elem.packet, trailer...)
-			}
 		}
 		scratch = append(scratch, elem.packet)
 	}
 
-	peer.timersAnyAuthenticatedPacketTraversal()
-	peer.timersAnyAuthenticatedPacketSent()
-
-	err := peer.SendBuffers(scratch)
+	var err error
+	if len(scratch) > 0 {
+		peer.timersAnyAuthenticatedPacketTraversal()
+		peer.timersAnyAuthenticatedPacketSent()
+		err = peer.SendBuffers(scratch)
+	}
 	if dataSent {
 		peer.timersDataSent()
 	}
@@ -935,7 +1013,7 @@ func (peer *Peer) processOutboundContainer(elemsContainer *QueueOutboundElements
 
 func (device *Device) randomTrailer(packetSize int) int {
 	if !device.randomTrailers.Load() {
-		return 0
+		return -1
 	}
 	if DefaultUdpWindow <= packetSize {
 		return 0
@@ -945,9 +1023,9 @@ func (device *Device) randomTrailer(packetSize int) int {
 
 func (peer *Peer) randomTrailer(packetSize int) int {
 	if !peer.device.randomTrailers.Load() {
-		return 0
+		return -1
 	}
-	udpWindow := int(peer.udpWindow.Load())
+	udpWindow := min(int(peer.udpWindow.Load()), awgMaxPacketSize)
 	if udpWindow <= packetSize {
 		return 0
 	}
@@ -957,16 +1035,20 @@ func (peer *Peer) randomTrailer(packetSize int) int {
 func (peer *Peer) randomPaddingAddition(packetSize int) int {
 	addition := peer.device.contentPaddingAddition.Load()
 	if addition.IsZero() {
-		return 0
+		return -1
 	}
-	udpWindow := int(peer.udpWindow.Load())
+	udpWindow := min(int(peer.udpWindow.Load()), awgMaxPacketSize)
 	if udpWindow <= packetSize {
 		return 0
 	}
-	add := int(addition.PickOne())
-	space := udpWindow - packetSize
-	if add > space {
-		add = space
+	// Pick in uint64 so the inclusive full uint32 range cannot wrap to zero.
+	lo, hi := uint64(addition.Lo()), uint64(addition.Hi())
+	width := hi - lo + 1
+	var picked uint64
+	if width == 1<<32 {
+		picked = uint64(fastrandn(1<<16))<<16 | uint64(fastrandn(1<<16))
+	} else {
+		picked = lo + uint64(fastrandn(uint32(width)))
 	}
-	return add
+	return int(min(picked, uint64(udpWindow-packetSize)))
 }

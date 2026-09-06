@@ -219,7 +219,7 @@ func (e *Endpoint) Start(postStart bool) error {
 	err = wgDevice.IpcSet(ipcConf.String())
 	if err != nil {
 		wgDevice.Close()
-		return E.Cause(err, "setup wireguard: \n", ipcConf.String())
+		return E.New("setup wireguard: rejected device configuration")
 	}
 	for _, peer := range e.peers {
 		if !peer.destination.IsDomain() {

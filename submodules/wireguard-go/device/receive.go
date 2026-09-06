@@ -33,6 +33,7 @@ type QueueInboundElement struct {
 	counter  uint64
 	keypair  *Keypair
 	endpoint conn.Endpoint
+	padding  int // original clear prefix, for authenticated window accounting
 }
 
 type QueueInboundElementsContainer struct {
@@ -134,7 +135,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 
 		// handle each packet in the batch
 		for i, size := range sizes[:count] {
-			if size < MinMessageSize {
+			if size < MinMessageSize || size > awgMaxPacketSize || size > len(bufsArrs[i]) {
 				continue
 			}
 
@@ -142,11 +143,11 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 
 			packet := bufsArrs[i][:size]
 
-			// get message padding and type based on information from S1-S4 and H1-H4
-			msgType, padding := device.DeterminePacketTypeAndPadding(packet, MessageUnknownType)
-			if padding > 0 {
-				copy(packet, packet[padding:])
-				packet = packet[:len(packet)-padding]
+			// Restore the header before index/MAC lookup, and remove only fixed
+			// handshake trailers. Transport AEAD authenticates its complete tail.
+			packet, msgType, padding := device.prepareReceivedPacket(packet)
+			if msgType == MessageUnknownType {
+				continue
 			}
 
 			switch msgType {
@@ -186,6 +187,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 				elem.keypair = keypair
 				elem.endpoint = endpoints[i]
 				elem.counter = 0
+				elem.padding = padding
 
 				elemsForPeer, ok := elemsByPeer[peer]
 				if !ok {
@@ -514,7 +516,13 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 		}
 		rxBytesLen += uint64(len(elem.packet) + MinMessageSize)
 
-		if len(elem.packet) == 0 {
+		window := uint32(elem.padding + MessageTransportSize + len(elem.packet))
+		for old := peer.udpWindow.Load(); old < window; old = peer.udpWindow.Load() {
+			if peer.udpWindow.CompareAndSwap(old, window) {
+				break
+			}
+		}
+		if len(elem.packet) == 0 || elem.packet[0] == 0 {
 			device.log.Verbosef("%v - Receiving keepalive packet", peer)
 			continue
 		}
@@ -543,9 +551,8 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 				continue
 			}
 			field := elem.packet[IPv6offsetPayloadLength : IPv6offsetPayloadLength+2]
-			length := binary.BigEndian.Uint16(field)
-			length += ipv6.HeaderLen
-			if int(length) > len(elem.packet) {
+			length := int(binary.BigEndian.Uint16(field)) + ipv6.HeaderLen
+			if length > len(elem.packet) {
 				continue
 			}
 			elem.packet = elem.packet[:length]
@@ -586,15 +593,62 @@ func (peer *Peer) processInboundContainer(elemsContainer *QueueInboundElementsCo
 	}
 }
 
+// prepareReceivedPacket leaves the core at buffer offset zero for the existing
+// TUN Write(offset=16) contract. HP is removed before copying away its nonce.
+// Never search for a transport tag by trying different ciphertext suffixes.
+func (device *Device) prepareReceivedPacket(packet []byte) ([]byte, uint32, int) {
+	device.wireMu.RLock()
+	defer device.wireMu.RUnlock()
+	msgType, prefix := device.determinePacketTypeAndPadding(packet, MessageUnknownType)
+	if msgType == MessageUnknownType {
+		return nil, MessageUnknownType, 0
+	}
+	coreSize, protectedSize := len(packet)-prefix, MessageTransportHeaderSize
+	switch msgType {
+	case MessageInitiationType:
+		coreSize, protectedSize = MessageInitiationSize, MessageInitiationSize
+	case MessageResponseType:
+		coreSize, protectedSize = MessageResponseSize, MessageResponseSize
+	case MessageCookieReplyType:
+		coreSize, protectedSize = MessageCookieReplySize, MessageCookieReplySize
+	}
+	core := packet[prefix : prefix+coreSize]
+	if key := device.headerProtection.key.Load(); key != nil && !key.IsZero() {
+		if prefix < HeaderCipherNonceSize {
+			return nil, MessageUnknownType, 0
+		}
+		cipher, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize])
+		if err != nil {
+			return nil, MessageUnknownType, 0
+		}
+		// A fresh stream starts at core byte zero, equivalent to continuing
+		// the official classifier's four-byte keystream at position four.
+		cipher.XORKeyStream(core[:protectedSize], core[:protectedSize])
+	}
+	copy(packet, core)
+	return packet[:coreSize], msgType, prefix
+}
+
 func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType uint32) (uint32, int) {
+	device.wireMu.RLock()
+	defer device.wireMu.RUnlock()
+	return device.determinePacketTypeAndPadding(packet, expectedType)
+}
+
+// Caller holds wireMu. Keeping the public classifier signature preserves its
+// existing callers; packet preparation additionally restores the actual bytes.
+func (device *Device) determinePacketTypeAndPadding(packet []byte, expectedType uint32) (uint32, int) {
 	size := len(packet)
+	if size < MinMessageSize || size > awgMaxPacketSize {
+		return MessageUnknownType, 0
+	}
 
 	// Fast path: 99.999% of wire traffic is transport data packets
 	if expectedType == MessageUnknownType || expectedType == MessageTransportType {
 		padding := device.paddings.transport
-		expectedSize := padding + MessageTransportHeaderSize
+		expectedSize, valid := awgPacketSize(padding, 0, MessageTransportSize)
 
-		if size >= expectedSize {
+		if valid && size >= expectedSize {
 			data := packet[padding:]
 			val := binary.LittleEndian.Uint32(data)
 			if len(packet) >= HeaderCipherNonceSize && device.headerProtection.key.Load() != nil {
@@ -604,7 +658,7 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 					val ^= binary.LittleEndian.Uint32(h[:])
 				}
 			}
-			if device.headers.transport.Validate(val) {
+			if device.headers.transport != nil && device.headers.transport.Validate(val) {
 				return MessageTransportType, padding
 			}
 		}
@@ -627,12 +681,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageInitiationType {
 		padding := device.paddings.init
 		header := device.headers.init
-		expectedSize := padding + MessageInitiationSize
+		expectedSize, valid := awgPacketSize(padding, MessageInitiationSize, 0)
 
-		if size == expectedSize || (randomTrailers && size > expectedSize) {
+		if valid && (size == expectedSize || (randomTrailers && size > expectedSize)) {
 			data := packet[padding:]
 			val := binary.LittleEndian.Uint32(data) ^ typeHash
-			if header.Validate(val) {
+			if header != nil && header.Validate(val) {
 				return MessageInitiationType, padding
 			}
 		}
@@ -641,12 +695,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageResponseType {
 		padding := device.paddings.response
 		header := device.headers.response
-		expectedSize := padding + MessageResponseSize
+		expectedSize, valid := awgPacketSize(padding, MessageResponseSize, 0)
 
-		if size == expectedSize || (randomTrailers && size > expectedSize) {
+		if valid && (size == expectedSize || (randomTrailers && size > expectedSize)) {
 			data := packet[padding:]
 			val := binary.LittleEndian.Uint32(data) ^ typeHash
-			if header.Validate(val) {
+			if header != nil && header.Validate(val) {
 				return MessageResponseType, padding
 			}
 		}
@@ -655,12 +709,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 	if expectedType == MessageUnknownType || expectedType == MessageCookieReplyType {
 		padding := device.paddings.cookie
 		header := device.headers.cookie
-		expectedSize := padding + MessageCookieReplySize
+		expectedSize, valid := awgPacketSize(padding, MessageCookieReplySize, 0)
 
-		if size == expectedSize || (randomTrailers && size > expectedSize) {
+		if valid && (size == expectedSize || (randomTrailers && size > expectedSize)) {
 			data := packet[padding:]
 			val := binary.LittleEndian.Uint32(data) ^ typeHash
-			if header.Validate(val) {
+			if header != nil && header.Validate(val) {
 				return MessageCookieReplyType, padding
 			}
 		}
@@ -668,4 +722,3 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 
 	return MessageUnknownType, 0
 }
-
