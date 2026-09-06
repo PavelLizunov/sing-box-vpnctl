@@ -210,7 +210,9 @@ func (device *Device) IpcSetOperation(r io.Reader) (err error) {
 
 	defer func() {
 		if err != nil {
-			device.log.Errorf("%v", err)
+			// Parser errors may echo rejected configuration values, including
+			// accidentally misplaced key material. Never log their raw text.
+			device.log.Errorf("UAPI configuration rejected")
 		}
 	}()
 
