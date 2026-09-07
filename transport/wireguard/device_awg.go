@@ -49,7 +49,12 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 			b.WriteString(strconv.FormatUint(uint64(value), 10))
 		}
 	}
+	var stringErr error
 	writeStr := func(key, value string) {
+		if strings.ContainsAny(value, "\r\n") {
+			stringErr = E.New("amneziawg: ", key, " must not contain CR or LF")
+			return
+		}
 		if value != "" {
 			b.WriteString("\n")
 			b.WriteString(key)
@@ -138,6 +143,9 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeBool("random_trailers", o.RandomTrailers)
 	writeBool("disable_cookies", o.DisableCookie)
 
+	if stringErr != nil {
+		return "", stringErr
+	}
 	return b.String(), nil
 }
 
