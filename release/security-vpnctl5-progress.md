@@ -25,4 +25,17 @@ Exact commands (relative to worker root; GO is absolute path above):
 
 Security interpretation: numeric/chain allocation hazards and UAPI line injection source verified directly. Session RNG change is hardening, not proof of predictable production IDs or session takeover. No unsafe large allocation was needed by the regressions.
 
-Remaining: format and strengthen edge tests, full AWG/device/XHTTP/race/full-tag tests and builds, release workflow pin/tag/no-clobber/attestation hardening, README and release notes, independent security review + parent evidence acceptance, push CI and release matrix, cryptographic verification of published provenance/revision/hashes/version. This is not a completion report.
+## Review repairs and candidate verification
+
+- Valid masquerade values with trailing CR/LF: RED 62a50d1c; GREEN f21c1735. Raw string validation now precedes sugar normalization.
+- Failed split connection retained deadline timers: RED f21c1735; GREEN 3c75c518 (full XHTTP race suite exit0). Both timers stopped, later rearming stopped too.
+- Later expired read deadline masked terminal upload error: RED 32d341b5; GREEN 4aa39602. Repeated Read preserves first terminal error.
+- Release policy Python tests: RED 1f64d5ab (3 failures), GREEN c06b2aee (3 pass). Actions verified via git ls-remote upstream; nttld/setup-ndk annotated v1 uses peeled commit ed92fe6cadad69be94a966a7ee3271275e62f779. Native attest v4 contract fetched from upstream pinned action.yml.
+- 8512213a device `go test -race ./device -count=1` exit0 (3.614s). Device source unchanged since.
+- 4aa3960205ac91346f670caf6ad019736b4928b3 option/AWG/XHTTP `go test -race -tags with_awg ... -count=1` exit0 (1.017/1.266/2.156s).
+- Full production-tag suite initially failed: omitted required `-ldflags=-checklinkname=0` broke experimental/libbox and boxdd test linking; corrected command resolves that. Independently, TestUnshareNamespace fails `operation not permitted` on this unprivileged worker. No privilege or host configuration changes made.
+- Corrected `$GO test -ldflags=-checklinkname=0 -tags "$TAGS" -skip TestUnshareNamespace ./...` at 4aa39602 exit0. This is NOT an unqualified full-suite pass: the namespace test remains untested in this worker environment.
+- CGO_ENABLED=0 production-tag build at 4aa39602 exit0. Binary version output: 1.14.0-vpnctl.5, Go1.27.1 linux/amd64, all release tags, Revision4aa3960205ac91346f670caf6ad019736b4928b3, CGO disabled.
+- Parent independently reviewed 91068e67..8512213a and deltas through 4aa39602. Initial reviewer findings repaired; parent accepted source and conditional evidence with explicit namespace boundary, pending final feature-tag race check and CI.
+
+Remaining: final formatting/evidence commit, push branch/PR and green CI, parent pre-tag acceptance, release matrix publication, cryptographic verification of published provenance/revision/hashes/version. This is not a completion report.

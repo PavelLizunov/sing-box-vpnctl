@@ -66,7 +66,9 @@ func TestSplitFailureClosesBoundAndLateBodies(t *testing.T) {
 			conn.setupReader(reader, nil)
 		}
 		conn.fail(io.EOF)
-		if ctx.Err() == nil { t.Fatal("terminal failure did not cancel requests") }
+		if ctx.Err() == nil {
+			t.Fatal("terminal failure did not cancel requests")
+		}
 		if got := reader.closes.Load(); got != 1 {
 			t.Fatalf("body closed %d times", got)
 		}
@@ -103,7 +105,9 @@ func TestSplitFailureSurvivesLaterDeadline(t *testing.T) {
 	conn.uploadFailed(io.ErrUnexpectedEOF)
 	conn.SetReadDeadline(time.Now().Add(-time.Second))
 	for i := 0; i < 100; i++ {
-		if _, err := conn.Read(make([]byte, 1)); err != io.ErrUnexpectedEOF { t.Fatalf("lost terminal error: %v", err) }
+		if _, err := conn.Read(make([]byte, 1)); err != io.ErrUnexpectedEOF {
+			t.Fatalf("lost terminal error: %v", err)
+		}
 	}
 }
 

@@ -39,7 +39,7 @@ jobs:
       - name: Test security regressions
         run: |
           python3 release/security_workflow_test.py
-          go test -race -tags with_awg -count=1 -timeout=180s ./option ./transport/wireguard ./transport/v2rayxhttp
+          go test -race -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp -ldflags=-checklinkname=0 -count=1 -timeout=180s ./option ./transport/wireguard ./transport/v2rayxhttp
 
       - name: Compile sing-box with production tags
         run: |
