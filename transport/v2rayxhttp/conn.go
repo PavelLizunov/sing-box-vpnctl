@@ -655,6 +655,12 @@ func (c *splitConn) Read(b []byte) (int, error) {
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
+		c.stateMu.Lock()
+		err := c.terminalErr
+		c.stateMu.Unlock()
+		if err != nil {
+			return 0, err
+		}
 		return 0, os.ErrDeadlineExceeded
 	}
 	c.stateMu.Lock()
