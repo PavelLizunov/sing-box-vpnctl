@@ -629,6 +629,8 @@ func (c *splitConn) fail(err error) {
 		close(c.created)
 	}
 	c.stateMu.Unlock()
+	c.writeDeadline.stop()
+	c.readDeadline.stop()
 	c.writeDeadline.reader.CloseWithError(err)
 	if c.cancel != nil { c.cancel() }
 	if reader != nil { reader.Close() }
@@ -680,14 +682,26 @@ func (c *splitConn) RemoteAddr() net.Addr { return c.serverAddr }
 
 // lx: 050 — real deadlines (were os.ErrInvalid); see streamConn.
 func (c *splitConn) SetDeadline(t time.Time) error {
-	if err := c.readDeadline.set(t); err != nil {
-		return err
-	}
-	return c.writeDeadline.set(t)
+	if err := c.SetReadDeadline(t); err != nil { return err }
+	return c.SetWriteDeadline(t)
 }
 
-func (c *splitConn) SetReadDeadline(t time.Time) error  { return c.readDeadline.set(t) }
-func (c *splitConn) SetWriteDeadline(t time.Time) error { return c.writeDeadline.set(t) }
+func (c *splitConn) SetReadDeadline(t time.Time) error {
+	err := c.readDeadline.set(t)
+	c.stateMu.Lock()
+	terminal := c.terminalErr != nil
+	c.stateMu.Unlock()
+	if terminal { c.readDeadline.stop() }
+	return err
+}
+func (c *splitConn) SetWriteDeadline(t time.Time) error {
+	err := c.writeDeadline.set(t)
+	c.stateMu.Lock()
+	terminal := c.terminalErr != nil
+	c.stateMu.Unlock()
+	if terminal { c.writeDeadline.stop() }
+	return err
+}
 
 // NeedAdditionalReadDeadline: see streamConn — the read deadline is one-shot.
 func (c *splitConn) NeedAdditionalReadDeadline() bool { return true }

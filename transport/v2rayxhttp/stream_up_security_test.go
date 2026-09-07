@@ -4,6 +4,8 @@ import (
  "context"
  "io"
  "strings"
+ "strconv"
+ "sync/atomic"
  "sync"
  "testing"
  "time"
@@ -12,8 +14,10 @@ import (
 )
 
 func TestStreamUpRejectUploadStatus(t *testing.T) {
+ for _, status := range []int{204, 301, 403, 500} {
+ t.Run(strconv.Itoa(status), func(t *testing.T) {
  hang := &hangRoundTripper{}
- client := stubClient(t, modeStreamUp, methodRoundTripper{get: hang, post: statusRoundTripper{code: 403}})
+ client := stubClient(t, modeStreamUp, methodRoundTripper{get: hang, post: statusRoundTripper{code: status}})
  conn, err := client.DialContext(context.Background())
  if err != nil { t.Fatal(err) }
  defer conn.Close()
@@ -28,6 +32,28 @@ func TestStreamUpRejectUploadStatus(t *testing.T) {
  case err := <-readErr:
   if err == nil || !strings.Contains(err.Error(), "upload status") { t.Fatalf("lost download error: %v", err) }
  case <-time.After(time.Second): t.Fatal("upload rejection left Read blocked")
+ }
+ })
+ }
+}
+
+type closeCountReader struct { closes atomic.Int32 }
+func (r *closeCountReader) Read(p []byte) (int,error) { return 0, io.EOF }
+func (r *closeCountReader) Close() error { r.closes.Add(1); return nil }
+
+func TestSplitFailureClosesBoundAndLateBodies(t *testing.T) {
+ for _, bound := range []bool{false, true} {
+  pr,pw := io.Pipe()
+  client := &xmuxClient{openUsage:1}
+  conn := newSplitConn(pr,pw,M.Socksaddr{},newXmuxRelease(client))
+  reader := &closeCountReader{}
+  if bound { conn.setupReader(reader,nil) }
+  conn.uploadFailed(io.ErrUnexpectedEOF)
+  if !bound { conn.setupReader(reader,nil) }
+  conn.fail(io.EOF)
+  conn.Close()
+  if got := reader.closes.Load(); got != 1 { t.Fatalf("body closed %d times",got) }
+  if got := client.getOpenUsage(); got != 0 { t.Fatalf("XMUX usage %d",got) }
  }
 }
 
@@ -52,6 +78,7 @@ func TestSplitFailureStopsTimers(t *testing.T) {
  defer conn.Close()
  conn.SetDeadline(time.Now().Add(time.Hour))
  conn.uploadFailed(io.ErrUnexpectedEOF)
+ conn.SetDeadline(time.Now().Add(time.Hour))
  conn.readDeadline.access.Lock()
  readStopped := conn.readDeadline.timer == nil
  conn.readDeadline.access.Unlock()
