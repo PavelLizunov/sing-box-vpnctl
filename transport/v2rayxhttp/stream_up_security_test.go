@@ -55,6 +55,8 @@ func TestSplitFailureClosesBoundAndLateBodies(t *testing.T) {
 		pr, pw := io.Pipe()
 		client := &xmuxClient{openUsage: 1}
 		conn := newSplitConn(pr, pw, M.Socksaddr{}, newXmuxRelease(client))
+		ctx, cancel := context.WithCancel(context.Background())
+		conn.cancel = cancel
 		reader := &closeCountReader{}
 		if bound {
 			conn.setupReader(reader, nil)
@@ -64,12 +66,16 @@ func TestSplitFailureClosesBoundAndLateBodies(t *testing.T) {
 			conn.setupReader(reader, nil)
 		}
 		conn.fail(io.EOF)
-		conn.Close()
+		if ctx.Err() == nil { t.Fatal("terminal failure did not cancel requests") }
 		if got := reader.closes.Load(); got != 1 {
 			t.Fatalf("body closed %d times", got)
 		}
 		if got := client.getOpenUsage(); got != 0 {
 			t.Fatalf("XMUX usage %d", got)
+		}
+		conn.Close()
+		if client.getOpenUsage() != 0 || reader.closes.Load() != 1 {
+			t.Fatal("Close repeated terminal cleanup")
 		}
 	}
 }
@@ -87,6 +93,17 @@ func TestSplitConnTerminalRaces(t *testing.T) {
 		wg.Wait()
 		writer.Close()
 		conn.Close()
+	}
+}
+
+func TestSplitFailureSurvivesLaterDeadline(t *testing.T) {
+	pr, pw := io.Pipe()
+	conn := newSplitConn(pr, pw, M.Socksaddr{}, nil)
+	defer conn.Close()
+	conn.uploadFailed(io.ErrUnexpectedEOF)
+	conn.SetReadDeadline(time.Now().Add(-time.Second))
+	for i := 0; i < 100; i++ {
+		if _, err := conn.Read(make([]byte, 1)); err != io.ErrUnexpectedEOF { t.Fatalf("lost terminal error: %v", err) }
 	}
 }
 
