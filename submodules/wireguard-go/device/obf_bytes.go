@@ -18,6 +18,10 @@ func newBytesObf(val string) (obf, error) {
 		return nil, errors.New("odd amount of symbols")
 	}
 
+	if len(val)/2 > awgMaxPacketSize {
+		return nil, errors.New("CPS bytes exceed packet limit")
+	}
+
 	bytes, err := hex.DecodeString(val)
 	if err != nil {
 		return nil, err

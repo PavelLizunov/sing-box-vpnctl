@@ -75,6 +75,9 @@ func (h MagicHeader) Spec() (string, error) {
 // (including "N-N"), "N-M" for a range — mirroring magic-header.go in the
 // vendored wireguard-go.
 func normalizeMagicHeader(spec string) (MagicHeader, error) {
+	if strings.ContainsAny(spec, "\r\n") {
+		return "", E.New("magic header must not contain CR or LF")
+	}
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return "", nil

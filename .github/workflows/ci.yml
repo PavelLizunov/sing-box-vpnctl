@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.x'
           cache: true
@@ -35,6 +35,11 @@ jobs:
 
       - name: Test AWG transport integration
         run: go test -tags "with_awg,with_wireguard,with_gvisor" -ldflags="-checklinkname=0" -count=1 -timeout=180s ./transport/wireguard
+
+      - name: Test security regressions
+        run: |
+          python3 release/security_workflow_test.py
+          go test -race -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp -ldflags=-checklinkname=0 -count=1 -timeout=180s ./option ./transport/wireguard ./transport/v2rayxhttp
 
       - name: Compile sing-box with production tags
         run: |
