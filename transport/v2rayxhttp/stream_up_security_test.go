@@ -3,7 +3,6 @@ package v2rayxhttp
 import (
  "context"
  "io"
- "net/http"
  "strings"
  "sync"
  "testing"
@@ -47,4 +46,17 @@ func TestSplitConnTerminalRaces(t *testing.T) {
  }
 }
 
-var _ = http.StatusOK
+func TestSplitFailureStopsTimers(t *testing.T) {
+ pr, pw := io.Pipe()
+ conn := newSplitConn(pr, pw, M.Socksaddr{}, nil)
+ defer conn.Close()
+ conn.SetDeadline(time.Now().Add(time.Hour))
+ conn.uploadFailed(io.ErrUnexpectedEOF)
+ conn.readDeadline.access.Lock()
+ readStopped := conn.readDeadline.timer == nil
+ conn.readDeadline.access.Unlock()
+ conn.writeDeadline.access.Lock()
+ writeStopped := conn.writeDeadline.timer == nil
+ conn.writeDeadline.access.Unlock()
+ if !readStopped || !writeStopped { t.Fatal("terminal failure retained deadline timers") }
+}
