@@ -23,10 +23,10 @@ package v2rayxhttp
 
 import (
 	"context"
-	"encoding/binary"
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -322,11 +322,26 @@ func (c *Client) newSessionID() string {
 		return newUUIDSessionID()
 	}
 	table := c.meta.sessionTable
-	id := make([]byte, c.meta.sessionLength.rand())
+	length := c.meta.sessionLength.min
+	if c.meta.sessionLength.max > length {
+		length += sessionRandomInt(c.meta.sessionLength.max - length + 1)
+	}
+	id := make([]byte, length)
 	for i := range id {
-		id[i] = table[randIntn(len(table))]
+		id[i] = table[sessionRandomInt(len(table))]
 	}
 	return string(id)
+}
+
+// sessionRandomInt uses unbiased cryptographic sampling, independent of padding.
+func sessionRandomInt(n int) int {
+	value, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		// crypto/rand.Reader is fail-stop on supported Go versions; never fall
+		// back to predictable session identifiers if entropy is unavailable.
+		panic(err)
+	}
+	return int(value.Int64())
 }
 
 // newUUIDSessionID returns a random session id formatted as a dashed UUID string
@@ -335,8 +350,7 @@ func (c *Client) newSessionID() string {
 // the form an unconfigured Xray peer also produces.
 func newUUIDSessionID() string {
 	var b [16]byte
-	binary.LittleEndian.PutUint64(b[0:8], rand.Uint64())
-	binary.LittleEndian.PutUint64(b[8:16], rand.Uint64())
+	rand.Read(b[:])
 
 	var buf [36]byte
 	hex.Encode(buf[0:8], b[0:4])
