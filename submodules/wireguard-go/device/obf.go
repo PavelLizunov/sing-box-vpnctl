@@ -4,7 +4,17 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"strconv"
 )
+
+// parseCPSLength bounds configuration before any packet allocation.
+func parseCPSLength(val string) (int, error) {
+	length, err := strconv.Atoi(val)
+	if err != nil || length < 0 || length > awgMaxPacketSize {
+		return 0, errors.New("CPS length must be between 0 and the packet limit")
+	}
+	return length, nil
+}
 
 type obfBuilder func(val string) (obf, error)
 
@@ -33,6 +43,7 @@ type obfChain struct {
 
 func newObfChain(spec string) (*obfChain, error) {
 	var (
+		total int
 		obfs []obf
 		errs []error
 	)
@@ -78,6 +89,11 @@ func newObfChain(spec string) (*obfChain, error) {
 			continue
 		}
 
+		length := o.ObfuscatedLen(0)
+		if length < 0 || length > awgMaxPacketSize-total {
+			return nil, errors.New("CPS chain exceeds packet limit")
+		}
+		total += length
 		obfs = append(obfs, o)
 		remaining = remaining[end+1:]
 	}
