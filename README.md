@@ -26,7 +26,7 @@
    - Preserves authenticated HTTP Clash API endpoints (`/traffic`, `/connections`, `/proxies`) across all platforms including mobile Android (`libbox.aar`).
    - In `/connections`, metadata includes `"user"` string for live per-client visibility in web panels.
    - Includes native gRPC V2Ray Stats service (`with_v2ray_api`) for cumulative, crash-proof traffic accounting on server nodes (`vpnctl`).
-5. **Independent Supply Chain**: Fully decoupled from third-party forks (`Leadaxe/sing-box-lx`), building reproducible signed binaries and AAR packages directly from our verified GitHub Actions CI.
+5. **Independent Supply Chain**: Release binaries and AAR packages are built by GitHub Actions from an exact tag revision, with SHA-pinned actions, SHA-256 checksums, and native GitHub artifact attestations. Existing releases are never overwritten.
 
 ---
 
@@ -101,6 +101,23 @@ To prevent DPI boxes from dropping TLS connections when browsers attempt ECH:
 
 ---
 
+## Security and release verification
+
+- CPS numeric lengths (`r`, `rc`, `rd`, `dz`) must be nonnegative. Each complete I1–I5 packet must fit the protocol packet limit (at most 65,507 bytes); oversized chains are rejected before handshake packet allocation. Zero-length fields remain supported.
+- AWG string options reject literal CR/LF before normalization or UAPI serialization. Encoded packet bytes such as `<b 0x0a0d>` remain valid.
+- XHTTP session IDs use `crypto/rand`. Custom alphabets are deduplicated before generation and the existing minimum ID-space check. Stream-up upload responses other than HTTP 200 terminate both directions with an error.
+- Release dispatch must select the requested tag itself (the selected workflow revision must equal that tag's commit). Published assets cannot be replaced by rerunning the workflow.
+
+Download an asset and `SHA256SUMS` from the same release, then verify with a current GitHub CLI supporting attestations:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+gh attestation verify ./sing-box-1.14.0-vpnctl.5-linux-amd64.tar.gz \
+  --repo PavelLizunov/sing-box-vpnctl --format json
+```
+
+Check the verified provenance source revision against the peeled release tag SHA, not just the repository name. Attestations bind the packaged assets and checksum files to the release workflow; they are not platform code-signing certificates or a claim of byte-for-byte reproducible builds.
+
 ## ⚡ Performance & Hardening Highlights
 Validated and optimized through the **`performance-autoresearch`** benchmark campaign:
 - **Fast-Path WireGuard Packet Classification**: Priority dispatch for `MessageTransportType` reduces per-packet classification latency from 13.7 ns to **1.5 ns** (9.3x faster, 0 allocs).
@@ -126,7 +143,7 @@ cd sing-box-vpnctl
 # Build standard release binary
 go build -trimpath \
   -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg" \
-  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.3" \
+  -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=1.14.0-vpnctl.5" \
   -o sing-box ./cmd/sing-box
 ```
 
