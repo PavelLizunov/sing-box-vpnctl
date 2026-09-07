@@ -3,8 +3,8 @@ package device
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 // parseCPSLength bounds configuration before any packet allocation.
@@ -44,8 +44,8 @@ type obfChain struct {
 func newObfChain(spec string) (*obfChain, error) {
 	var (
 		total int
-		obfs []obf
-		errs []error
+		obfs  []obf
+		errs  []error
 	)
 
 	remaining := spec[:]

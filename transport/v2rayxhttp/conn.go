@@ -560,8 +560,8 @@ func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 // mode). The download body is ready immediately; the upload POST is driven by
 // the caller in a goroutine.
 type splitConn struct {
-	stateMu sync.Mutex
-	ready bool
+	stateMu     sync.Mutex
+	ready       bool
 	terminalErr error
 	// xmux releases this stream's pooled connection when the conn closes.
 	xmux *xmuxRelease
@@ -603,7 +603,9 @@ func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
 	c.stateMu.Lock()
 	if c.ready || c.terminalErr != nil {
 		c.stateMu.Unlock()
-		if reader != nil { reader.Close() }
+		if reader != nil {
+			reader.Close()
+		}
 		return
 	}
 	c.reader = reader
@@ -632,8 +634,12 @@ func (c *splitConn) fail(err error) {
 	c.writeDeadline.stop()
 	c.readDeadline.stop()
 	c.writeDeadline.reader.CloseWithError(err)
-	if c.cancel != nil { c.cancel() }
-	if reader != nil { reader.Close() }
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if reader != nil {
+		reader.Close()
+	}
 	c.xmux.release()
 }
 
@@ -653,12 +659,18 @@ func (c *splitConn) Read(b []byte) (int, error) {
 	}
 	c.stateMu.Lock()
 	reader, err := c.reader, c.readerErr
-	if c.terminalErr != nil { err = c.terminalErr }
+	if c.terminalErr != nil {
+		err = c.terminalErr
+	}
 	c.stateMu.Unlock()
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	n, err := reader.Read(b)
 	c.stateMu.Lock()
-	if c.terminalErr != nil { err = c.terminalErr }
+	if c.terminalErr != nil {
+		err = c.terminalErr
+	}
 	c.stateMu.Unlock()
 	c.breaker.noteRead(err)
 	return n, err
@@ -682,7 +694,9 @@ func (c *splitConn) RemoteAddr() net.Addr { return c.serverAddr }
 
 // lx: 050 — real deadlines (were os.ErrInvalid); see streamConn.
 func (c *splitConn) SetDeadline(t time.Time) error {
-	if err := c.SetReadDeadline(t); err != nil { return err }
+	if err := c.SetReadDeadline(t); err != nil {
+		return err
+	}
 	return c.SetWriteDeadline(t)
 }
 
@@ -691,7 +705,9 @@ func (c *splitConn) SetReadDeadline(t time.Time) error {
 	c.stateMu.Lock()
 	terminal := c.terminalErr != nil
 	c.stateMu.Unlock()
-	if terminal { c.readDeadline.stop() }
+	if terminal {
+		c.readDeadline.stop()
+	}
 	return err
 }
 func (c *splitConn) SetWriteDeadline(t time.Time) error {
@@ -699,7 +715,9 @@ func (c *splitConn) SetWriteDeadline(t time.Time) error {
 	c.stateMu.Lock()
 	terminal := c.terminalErr != nil
 	c.stateMu.Unlock()
-	if terminal { c.writeDeadline.stop() }
+	if terminal {
+		c.writeDeadline.stop()
+	}
 	return err
 }
 
