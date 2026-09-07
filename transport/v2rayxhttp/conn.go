@@ -189,6 +189,11 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 			conn.uploadFailed(err)
 			return
 		}
+		if upResp.StatusCode != http.StatusOK {
+			conn.uploadFailed(E.New("v2ray-xhttp: unexpected upload status: ", upResp.Status))
+			upResp.Body.Close()
+			return
+		}
 		drainAndClose(upResp.Body)
 	}()
 	return conn, nil
@@ -555,6 +560,9 @@ func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 // mode). The download body is ready immediately; the upload POST is driven by
 // the caller in a goroutine.
 type splitConn struct {
+	stateMu sync.Mutex
+	ready bool
+	terminalErr error
 	// xmux releases this stream's pooled connection when the conn closes.
 	xmux *xmuxRelease
 	// breaker classifies read results and local teardown (lx: SPEC 076).
@@ -584,34 +592,46 @@ func newSplitConn(uploadReader *io.PipeReader, writer *io.PipeWriter, serverAddr
 	}
 	conn.writeDeadline.reader = uploadReader
 	conn.readDeadline = newReadDeadline(func() {
-		conn.breaker.localClosed.Store(true) // lx: SPEC 076 — our teardown, not a remote failure
-		select {
-		case <-conn.created:
-			if conn.reader != nil {
-				conn.reader.Close()
-			}
-		default:
-		}
+		conn.breaker.localClosed.Store(true)
+		conn.fail(os.ErrDeadlineExceeded)
 	})
 	return conn
 }
 
 // setupReader binds the download body (or its error) and releases blocked Reads.
 func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
+	c.stateMu.Lock()
+	if c.ready || c.terminalErr != nil {
+		c.stateMu.Unlock()
+		if reader != nil { reader.Close() }
+		return
+	}
 	c.reader = reader
 	c.readerErr = err
+	c.ready = true
 	close(c.created)
+	c.stateMu.Unlock()
 }
 
 // fail marks the raise failed; see streamConn.fail (lx: SPEC 072). A dead
 // download side kills the conn as a whole — VLESS can never read a response —
 // so the upload pipe is broken too, freeing any writer parked on it.
 func (c *splitConn) fail(err error) {
-	c.setupReader(nil, err)
-	c.writeDeadline.reader.CloseWithError(err)
-	if c.cancel != nil {
-		c.cancel()
+	c.stateMu.Lock()
+	if c.terminalErr != nil {
+		c.stateMu.Unlock()
+		return
 	}
+	c.terminalErr = err
+	reader := c.reader
+	if !c.ready {
+		c.ready = true
+		close(c.created)
+	}
+	c.stateMu.Unlock()
+	c.writeDeadline.reader.CloseWithError(err)
+	if c.cancel != nil { c.cancel() }
+	if reader != nil { reader.Close() }
 	c.xmux.release()
 }
 
@@ -620,21 +640,25 @@ func (c *splitConn) fail(err error) {
 // the writer a bare ErrClosedPipe (io.Pipe's writeCloseError prefers rerr and
 // suppresses werr; see the writeDeadline note). lx: SPEC 072.
 func (c *splitConn) uploadFailed(err error) {
-	c.writeDeadline.reader.CloseWithError(err)
+	c.fail(err)
 }
 
 func (c *splitConn) Read(b []byte) (int, error) {
-	// Late-bound reader: synchronise on created, exactly as streamConn.Read does.
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
 		return 0, os.ErrDeadlineExceeded
 	}
-	if c.readerErr != nil {
-		return 0, c.readerErr
-	}
-	n, err := c.reader.Read(b)
-	c.breaker.noteRead(err) // lx: SPEC 076
+	c.stateMu.Lock()
+	reader, err := c.reader, c.readerErr
+	if c.terminalErr != nil { err = c.terminalErr }
+	c.stateMu.Unlock()
+	if err != nil { return 0, err }
+	n, err := reader.Read(b)
+	c.stateMu.Lock()
+	if c.terminalErr != nil { err = c.terminalErr }
+	c.stateMu.Unlock()
+	c.breaker.noteRead(err)
 	return n, err
 }
 func (c *splitConn) Write(b []byte) (int, error) { return c.writer.Write(b) }
@@ -646,22 +670,7 @@ func (c *splitConn) Close() error {
 		c.writeDeadline.stop()
 		c.readDeadline.stop()
 		c.writer.Close()
-		// The reader may not be bound yet (see dialStreamUp); a pending
-		// RoundTrip is torn down by the conn-context cancel below.
-		select {
-		case <-c.created:
-			if c.reader != nil {
-				c.reader.Close()
-			}
-		default:
-		}
-		// lx: SPEC 072 — kill the conn-scoped request context (aborts pending
-		// download/upload RoundTrips).
-		if c.cancel != nil {
-			c.cancel()
-		}
-		// lx: 059 — release the pooled connection last, once nothing reads it.
-		c.xmux.release()
+		c.fail(net.ErrClosed)
 	})
 	return nil
 }
