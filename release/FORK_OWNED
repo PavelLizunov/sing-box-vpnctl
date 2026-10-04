@@ -1,0 +1,57 @@
+# Fork boundary. Checked by release/fork_boundary_test.py in CI.
+#
+# Every file that differs from the upstream commit in release/FORK_UPSTREAM_BASE
+# must be listed here. Anything else has to stay byte-identical to upstream, so
+# the next core update is a clean merge.
+#
+# [owned]   paths the fork added; shell-style patterns, "*" also crosses "/".
+# [derived] the embedded WireGuard, ported from its own upstream: bug fixes only.
+# [hooks]   upstream files that carry fork lines, with the largest allowed
+#           number of added and removed lines. Do not grow a hook: put the logic
+#           into an owned file and keep the hook a one-line call.
+
+[owned]
+.github/workflows/ci.yml
+.github/workflows/release.yml
+.github/workflows/verify.yml
+ARCHITECTURE.md
+README.md
+ROADMAP.md
+SPECS/*
+autoresearch.manifest.sha256
+autoresearch/*
+docs/reviews/*
+docs/specs/*
+include/v2rayxhttp.go
+option/v2ray_xhttp*.go
+option/wireguard_awg*.go
+release/FORK_OWNED
+release/FORK_UPSTREAM_BASE
+release/fork_boundary_test.py
+release/security-vpnctl5-progress.md
+release/security_workflow_test.py
+release/v1.14.0-vpnctl.5.md
+transport/v2ray/registry.go
+transport/v2rayxhttp/*
+transport/wireguard/*awg*
+transport/wireguard/masque_cps_test.go
+
+[derived]
+submodules/wireguard-go/*
+
+[hooks]
+.gitignore +4 -0
+cmd/internal/build_libbox/main.go +1 -1
+constant/v2ray.go +1 -0
+experimental/clashapi/connections.go +1 -0
+go.mod +3 -0
+option/v2ray_transport.go +6 -0
+option/wireguard.go +1 -0
+protocol/wireguard/endpoint.go +1 -0
+release/DEFAULT_BUILD_TAGS +1 -1
+release/DEFAULT_BUILD_TAGS_OTHERS +1 -1
+release/DEFAULT_BUILD_TAGS_WINDOWS +1 -1
+transport/v2ray/transport.go +3 -15
+transport/wireguard/client_bind.go +16 -2
+transport/wireguard/endpoint.go +10 -1
+transport/wireguard/endpoint_options.go +2 -0
