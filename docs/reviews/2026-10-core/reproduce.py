@@ -30,16 +30,16 @@ def main():
             parser.error(f"Evidence hash mismatch: {name}")
     replace = {
         str(ROOT / "submodules/wireguard-go/device/endpoint_resolver_test.go"):
-            str(HERE / "review_awg_handshake_test.go")
+            str(HERE / "review_awg_handshake_test.go.txt")
     }
     run = "^TestReviewAWG(Basic|RandomTrailers|HeaderProtection)$"
     if args.mode in ("trim", "unwrap"):
-        fixture = "review_receive_trim.go" if args.mode == "trim" else "review_receive_unwrap.go"
+        fixture = "review_receive_trim.go.txt" if args.mode == "trim" else "review_receive_unwrap.go.txt"
         replace[str(ROOT / "submodules/wireguard-go/device/receive.go")] = str(HERE / fixture)
         run = "^TestReviewAWG" + ("RandomTrailers" if args.mode == "trim" else "HeaderProtection") + "$"
     elif args.mode == "before-update":
         for name in ("send.go", "receive.go"):
-            replace[str(ROOT / "submodules/wireguard-go/device" / name)] = str(HERE / ("before-update-" + name))
+            replace[str(ROOT / "submodules/wireguard-go/device" / name)] = str(HERE / ("before-update-" + name + ".txt"))
     with tempfile.TemporaryDirectory(prefix="awg-review-") as temporary:
         overlay = Path(temporary) / "overlay.json"
         overlay.write_text(json.dumps({"Replace": replace}))

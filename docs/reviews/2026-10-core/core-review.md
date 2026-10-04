@@ -39,11 +39,11 @@ Rejected hypothesis: full uint32 rekey range causes panic. A temporary overlay e
 
 ## Evidence files
 Published alongside this report, with no dependency on the original machine or temporary folders:
-- `reproduce.py` generates checkout-relative Go overlays in a fresh temporary directory; `review_awg_handshake_test.go` contains the exact added loopback reproductions. It does not edit engine sources.
+- `reproduce.py` generates checkout-relative Go overlays in a fresh temporary directory; `review_awg_handshake_test.go.txt` contains the exact added loopback reproductions. It does not edit engine sources.
 - `awg-handshake-Basic.log`, `awg-handshake-RandomTrailers.log`, `awg-handshake-HeaderProtection.log`.
-- `random-trailers-trim-proof.log` and `review_receive_trim.go`: causal trailer experiment, not a production fix.
-- `header-unwrap-proof.log` and `review_receive_unwrap.go`: causal header-protection experiment, not a production fix.
-- `before-update-awg-proof.log`, `before-update-send.go`, `before-update-receive.go`: pre-existing-code attribution.
+- `random-trailers-trim-proof.log` and `review_receive_trim.go.txt`: causal trailer experiment, not a production fix.
+- `header-unwrap-proof.log` and `review_receive_unwrap.go.txt`: causal header-protection experiment, not a production fix.
+- `before-update-awg-proof.log`, `before-update-send.go.txt`, `before-update-receive.go.txt`: pre-existing-code attribution.
 - `build-linux-arm64.log`, `build-linux-arm.log`, `build-windows-amd64.log`, `build-windows-arm64.log`, `build-darwin-amd64.log`, `build-darwin-arm64.log`. Empty successful compiler logs are retained; the return-code summary is in the Passed checks section.
 - `tags.txt`, `ci-config.json`: actual Linux release build inputs. Compiled binaries are intentionally not published.
 - `SHA256.json`: hashes of the published evidence. Original absolute-path overlays are replaced by the portable runner.
