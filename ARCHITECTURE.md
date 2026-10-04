@@ -1,7 +1,7 @@
 # sing-box-vpnctl Architecture Specification
 
 ## 1. Foundation & Maintenance Model
-`sing-box-vpnctl` is a hardened, additive distribution tracking official release tags of **SagerNet/sing-box** (`https://github.com/SagerNet/sing-box.git`), starting with **v1.14.0** (commit `0b8995879f29a9b98ee027bc17b75e101445b238`).
+`sing-box-vpnctl` is a hardened, additive distribution tracking official release tags of **SagerNet/sing-box** (`https://github.com/SagerNet/sing-box.git`), currently based on stable **v1.14.2** (commit `af6e64c3b69e6132ebaee0e1a3d24e93903f6709`). The original v1.14.0 baseline remains an ancestor.
 
 ### Design Philosophy
 - **Clean Baseline Tracking**: Maintain strict ancestry from official upstream tags. No divergence or rewriting of upstream interfaces.

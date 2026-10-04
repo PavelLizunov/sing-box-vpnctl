@@ -9,7 +9,7 @@
 
 ## 🎯 Overview
 
-`sing-box-vpnctl` is a production-grade, hardened distribution of **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)** (tracking official stable releases starting from v1.14+) purpose-built to provide:
+`sing-box-vpnctl` is a production-grade, hardened distribution of **[SagerNet/sing-box](https://github.com/SagerNet/sing-box)** (currently based on official stable [v1.14.2](https://github.com/SagerNet/sing-box/releases/tag/v1.14.2)) purpose-built to provide:
 
 1. **First-Class AmneziaWG Support**: Native WireGuard obfuscation supporting both **AmneziaWG 2.0** (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5` CPS, masquerading) and **AmneziaWG 3.1** (`RandomTrailers`, `DisableCookie`, `header_protection_key`, `content_padding_addition`).
 2. **XHTTP Transport (SplitHTTP)**: Native support for Xray-compatible HTTP transport (`with_xhttp`), featuring:
@@ -64,6 +64,14 @@
 ```
 
 ---
+
+### Embedded protocol references and limits
+
+The embedded WireGuard engine incorporates SagerNet **v0.0.7** API and socket recovery changes while retaining our AWG additions. The AWG protocol reference is official **v3.1.20260828**.
+
+`rekey_after_time` accepts a seconds value or inclusive range (for example, `"60-120"`). A range is sampled on each rotation check, matching AmneziaWG v3.1; unset or `"0"` retains the 120-second WireGuard default. Cookies remain enabled by default: `disable_cookies=true` bypasses handshake overload protection.
+
+This native XHTTP client supports HTTP/1.1 and HTTP/2. HTTP/3 and separate Xray `downloadSettings` are not supported. Updating sing-box does not replace this transport with Xray-core, and Xray prereleases are not adopted automatically.
 
 ## 🌐 Anti-Censorship DNS Recipes
 

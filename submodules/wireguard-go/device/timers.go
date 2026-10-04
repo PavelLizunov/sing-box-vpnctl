@@ -13,6 +13,15 @@ import (
 	_ "unsafe"
 )
 
+// rekeyAfterTime follows AmneziaWG v3.1: a non-zero range is sampled in
+// seconds for each check; an unset or zero range preserves WireGuard's default.
+func (device *Device) rekeyAfterTime() time.Duration {
+	if timing := device.rekeyAfterTimeSec.Load(); !timing.IsZero() {
+		return time.Duration(timing.PickOne()) * time.Second
+	}
+	return RekeyAfterTime
+}
+
 //go:linkname fastrandn runtime.fastrandn
 func fastrandn(n uint32) uint32
 

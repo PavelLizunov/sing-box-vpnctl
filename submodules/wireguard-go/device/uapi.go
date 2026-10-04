@@ -163,6 +163,9 @@ func (device *Device) IpcGetOperation(w io.Writer) error {
 		if addition := device.contentPaddingAddition.Load(); !addition.IsZero() {
 			sendf("content_padding_addition=%s", addition.ToString())
 		}
+		if timing := device.rekeyAfterTimeSec.Load(); !timing.IsZero() {
+			sendf("rekey_after_time=%s", timing.ToString())
+		}
 
 		for _, peer := range device.peers.keyMap {
 			// Serialize peer state.
@@ -489,6 +492,14 @@ func (device *Device) handleDeviceLine(key, value string) error {
 		}
 		device.log.Verbosef("UAPI: Updating content padding addition")
 		device.contentPaddingAddition.Store(r)
+
+	case "rekey_after_time":
+		var timing UintRange
+		if err := timing.FromString(value); err != nil {
+			return ipcErrorf(ipc.IpcErrorInvalid, "failed to parse rekey after time: %w", err)
+		}
+		device.log.Verbosef("UAPI: Updating rekey after time")
+		device.rekeyAfterTimeSec.Store(timing)
 
 	default:
 		return ipcErrorf(ipc.IpcErrorInvalid, "invalid UAPI device key: %v", key)
