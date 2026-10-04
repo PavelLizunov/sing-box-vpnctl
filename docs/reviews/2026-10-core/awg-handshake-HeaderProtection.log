@@ -1,0 +1,8 @@
+=== RUN   TestReviewAWGHeaderProtection
+=== PAUSE TestReviewAWGHeaderProtection
+=== CONT  TestReviewAWGHeaderProtection
+    endpoint_resolver_test.go:253: timed out waiting for endpoint to converge on  127.0.0.1:42806
+--- FAIL: TestReviewAWGHeaderProtection (2.01s)
+FAIL
+FAIL	github.com/sagernet/wireguard-go/device	2.018s
+FAIL

@@ -1,0 +1,46 @@
+          {
+            "log": { "level": "warn" },
+            "experimental": {
+              "clash_api": { "external_controller": "127.0.0.1:9090" }
+            },
+            "dns": {
+              "servers": [
+                { "tag": "remote-dns", "type": "https", "server": "1.1.1.1", "detour": "xhttp-out" },
+                { "tag": "local-dns", "type": "local", "detour": "direct" }
+              ],
+              "rules": [
+                { "query_type": ["HTTPS", "SVCB"], "action": "reject" }
+              ],
+              "final": "remote-dns"
+            },
+            "route": { "default_domain_resolver": "remote-dns" },
+            "inbounds": [
+              { "type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 10808 }
+            ],
+            "endpoints": [
+              {
+                "type": "wireguard",
+                "tag": "awg-ep",
+                "address": ["10.0.0.2/32"],
+                "private_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "peers": [{ "address": "198.51.100.1", "port": 51820, "public_key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=", "allowed_ips": ["0.0.0.0/0"] }],
+                "jc": 4, "jmin": 40, "jmax": 70, "s1": 20, "s2": 30, "s3": 20, "s4": 30,
+                "h1": 12345678, "h2": 23456789, "h3": 34567890, "h4": 45678901,
+                "random_trailers": true, "disable_cookies": true,
+                "header_protection_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "content_padding_addition": "10-50", "rekey_after_time": "60-120"
+              }
+            ],
+            "outbounds": [
+              {
+                "type": "vless",
+                "tag": "xhttp-out",
+                "server": "example.com",
+                "server_port": 443,
+                "uuid": "00000000-0000-0000-0000-000000000000",
+                "tls": { "enabled": true, "server_name": "example.com" },
+                "transport": { "type": "xhttp", "path": "/xhttp", "mode": "auto" }
+              },
+              { "type": "direct", "tag": "direct" }
+            ]
+          }
