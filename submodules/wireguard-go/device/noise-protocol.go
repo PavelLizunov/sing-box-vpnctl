@@ -66,7 +66,7 @@ const (
 	MessageResponseSize               = 92                                            // size of response message
 	MessageCookieReplySize            = 64                                            // size of cookie reply message
 	MessageTransportHeaderSize        = 16                                            // size of data preceding content in transport message
-	MessageEncapsulatingTransportSize = 0 // lx: zeroed for AmneziaWG compatibility                                             // size of optional, free (for use by conn.Bind.Send()) space preceding the transport header
+	MessageEncapsulatingTransportSize = 0                                             // lx: zeroed for AmneziaWG compatibility                                             // size of optional, free (for use by conn.Bind.Send()) space preceding the transport header
 	MessageTransportSize              = MessageTransportHeaderSize + poly1305.TagSize // size of empty transport
 	MessageKeepaliveSize              = MessageTransportSize                          // size of keepalive
 	MessageHandshakeSize              = MessageInitiationSize                         // size of largest handshake related message
@@ -270,6 +270,11 @@ func init() {
 }
 
 func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, error) {
+	return device.createMessageInitiation(peer, device.handshakeWireConfig(MessageInitiationType).header)
+}
+
+// The sender passes the header from the same snapshot used for framing.
+func (device *Device) createMessageInitiation(peer *Peer, msgType uint32) (*MessageInitiation, error) {
 	device.staticIdentity.RLock()
 	defer device.staticIdentity.RUnlock()
 
@@ -287,8 +292,6 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 	}
 
 	handshake.mixHash(handshake.remoteStatic[:])
-
-	msgType := device.headers.init.Generate()
 
 	msg := MessageInitiation{
 		Type:      msgType,
@@ -456,6 +459,10 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation, endpoint 
 }
 
 func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error) {
+	return device.createMessageResponse(peer, device.handshakeWireConfig(MessageResponseType).header)
+}
+
+func (device *Device) createMessageResponse(peer *Peer, msgType uint32) (*MessageResponse, error) {
 	handshake := &peer.handshake
 	handshake.mutex.Lock()
 	defer handshake.mutex.Unlock()
@@ -474,7 +481,7 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	}
 
 	var msg MessageResponse
-	msg.Type = device.headers.response.Generate()
+	msg.Type = msgType
 	msg.Sender = handshake.localIndex
 	msg.Receiver = handshake.remoteIndex
 

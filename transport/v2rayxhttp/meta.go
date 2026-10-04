@@ -222,11 +222,18 @@ func resolveSessionID(table, length string) (string, intRange, error) {
 	if predefined, ok := predefinedSessionTables[table]; ok {
 		table = predefined
 	}
+	var seen [128]bool
+	unique := make([]byte, 0, 128)
 	for i := 0; i < len(table); i++ {
 		if table[i] > unicode.MaxASCII {
 			return "", intRange{}, E.New("v2ray-xhttp: session_table must be ASCII")
 		}
+		if !seen[table[i]] {
+			seen[table[i]] = true
+			unique = append(unique, table[i])
+		}
 	}
+	table = string(unique)
 	r, err := parseRange(length, "session_length")
 	if err != nil {
 		return "", intRange{}, err

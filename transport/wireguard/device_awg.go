@@ -36,6 +36,13 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	if !o.IsSet() {
 		return "", nil
 	}
+	// Validate raw values before normalization or masquerade generation can
+	// hide line breaks. Never include their contents in errors.
+	for _, value := range []string{string(o.H1), string(o.H2), string(o.H3), string(o.H4), o.I1, o.I2, o.I3, o.I4, o.I5, o.Id, o.Ip, o.Ib, o.HeaderProtectionKey, o.ContentPaddingAddition, o.RekeyAfterTime} {
+		if strings.ContainsAny(value, "\r\n") {
+			return "", E.New("amneziawg: string options must not contain CR or LF")
+		}
+	}
 	if err := validateJunk(o); err != nil {
 		return "", err
 	}
@@ -49,7 +56,12 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 			b.WriteString(strconv.FormatUint(uint64(value), 10))
 		}
 	}
+	var stringErr error
 	writeStr := func(key, value string) {
+		if strings.ContainsAny(value, "\r\n") {
+			stringErr = E.New("amneziawg: ", key, " must not contain CR or LF")
+			return
+		}
 		if value != "" {
 			b.WriteString("\n")
 			b.WriteString(key)
@@ -138,6 +150,9 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeBool("random_trailers", o.RandomTrailers)
 	writeBool("disable_cookies", o.DisableCookie)
 
+	if stringErr != nil {
+		return "", stringErr
+	}
 	return b.String(), nil
 }
 

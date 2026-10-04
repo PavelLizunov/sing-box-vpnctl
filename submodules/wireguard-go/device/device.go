@@ -103,6 +103,10 @@ type Device struct {
 	log          *Logger
 	pauseManager pause.Manager
 
+	// wireMu makes header/prefix/key updates coherent with packet framing.
+	// It is separate from ipcMutex: peer post-config can synchronously send.
+	wireMu sync.RWMutex
+
 	// lx: AmneziaWG obfuscation state (grafted from amneziawg-go).
 	junk struct {
 		min   int

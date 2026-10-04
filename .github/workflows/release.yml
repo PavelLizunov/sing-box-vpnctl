@@ -7,21 +7,58 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v1.14.0-vpnctl.3)'
+        description: 'Existing release tag (select the same tag as workflow ref)'
         required: true
-        default: 'v1.14.0-vpnctl.3'
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
+  id-token: write
+  attestations: write
 
 env:
   DEFAULT_TAGS: "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,with_v2ray_api,with_naive_outbound,with_purego,badlinkname,tfogo_checklinkname0,with_xhttp,with_awg"
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve immutable release revision
+        id: resolve
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-vpnctl\.[0-9]+$ ]]
+          SHA=$(git rev-parse --verify "refs/tags/${TAG}^{commit}")
+          test "$SHA" = "$GITHUB_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)" = public
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > released-tags
+          if grep -Fxq "$TAG" released-tags; then
+            echo 'Refusing to replace an existing release' >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
   # --------------------------------------------------------------------------
   # 1. Build Windows Binaries (amd64, arm64)
   # --------------------------------------------------------------------------
   build-windows:
+    needs: resolve
     name: Build Windows (${{ matrix.goarch }})
     runs-on: ubuntu-latest
     strategy:
@@ -32,13 +69,15 @@ jobs:
           - { goarch: arm64, asset: windows-arm64 }
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.x'
           cache: true
@@ -46,7 +85,8 @@ jobs:
       - name: Resolve Version
         id: ver
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
 
@@ -74,7 +114,7 @@ jobs:
           rm -rf pkg
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-${{ matrix.goarch }}
           path: dist/*.zip
@@ -83,6 +123,7 @@ jobs:
   # 2. Build Linux Binaries (amd64, arm64, armv7)
   # --------------------------------------------------------------------------
   build-linux:
+    needs: resolve
     name: Build Linux (${{ matrix.asset }})
     runs-on: ubuntu-latest
     strategy:
@@ -94,13 +135,15 @@ jobs:
           - { goarch: arm, goarm: "7", asset: linux-armv7 }
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.x'
           cache: true
@@ -108,7 +151,8 @@ jobs:
       - name: Resolve Version
         id: ver
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build Binary
@@ -134,7 +178,7 @@ jobs:
           rm -rf pkg
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.asset }}
           path: dist/*.tar.gz
@@ -143,17 +187,20 @@ jobs:
   # 3. Build macOS Universal Binary (amd64 + arm64 lipo)
   # --------------------------------------------------------------------------
   build-darwin:
+    needs: resolve
     name: Build macOS (Universal)
     runs-on: macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.x'
           cache: true
@@ -161,7 +208,8 @@ jobs:
       - name: Resolve Version
         id: ver
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build macOS amd64
@@ -206,7 +254,7 @@ jobs:
           rm -rf pkg
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: darwin-universal
           path: |
@@ -217,39 +265,42 @@ jobs:
   # 4. Build Android AAR (gomobile with_clash_api + with_awg + with_xhttp)
   # --------------------------------------------------------------------------
   build-android:
+    needs: resolve
     name: Build Android (libbox.aar)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ needs.resolve.outputs.sha }}
           submodules: recursive
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.26.x'
           cache: true
 
       - name: Setup OpenJDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1 (peeled)
         with:
           ndk-version: r28
 
       - name: Resolve Version
         id: ver
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          git tag "$TAG" -f 2>/dev/null || true
 
       - name: Install gomobile tools
         run: |
@@ -274,7 +325,7 @@ jobs:
           fi
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: android-aar
           path: dist/*.aar
@@ -284,7 +335,12 @@ jobs:
   # --------------------------------------------------------------------------
   publish:
     name: Publish Release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     needs:
+      - resolve
       - build-windows
       - build-linux
       - build-darwin
@@ -292,24 +348,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 0
 
       - name: Resolve Tag
         id: ver
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          TAG="${{ needs.resolve.outputs.tag }}"
+          test "$(git rev-parse HEAD)" = "${{ needs.resolve.outputs.sha }}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Download all built artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: artifacts
 
       - name: Prepare Release Assets & Checksums
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" -o -name "*.aar" \) -exec cp {} release-assets/ \;
+          while IFS= read -r -d '' asset; do
+            name=$(basename "$asset")
+            test ! -e "release-assets/$name"
+            cp "$asset" "release-assets/$name"
+          done < <(find artifacts -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.aar' \) -print0)
           cd release-assets
           echo "=== Collected Release Assets ==="
           ls -la
@@ -322,18 +387,24 @@ jobs:
           done
           cat SHA256SUMS
 
+      - name: Attest release assets and checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release-assets/*
+
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.ver.outputs.tag }}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists, uploading new assets..."
-            gh release upload "$TAG" release-assets/* --clobber
-          else
-            echo "Creating new release $TAG..."
-            gh release create "$TAG" \
-              release-assets/* \
-              --title "sing-box-vpnctl ${TAG}" \
-              --generate-notes
+          test "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "${{ needs.resolve.outputs.sha }}"
+          git ls-remote origin "refs/tags/$TAG" "refs/tags/$TAG^{}" > remote-tag
+          REMOTE_SHA=$(awk 'END {print $1}' remote-tag)
+          test "$REMOTE_SHA" = "${{ needs.resolve.outputs.sha }}"
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > released-tags
+          if grep -Fxq "$TAG" released-tags; then
+            echo 'Refusing to replace an existing release' >&2
+            exit 1
           fi
+          gh release create "$TAG" release-assets/* --verify-tag \
+            --title "sing-box-vpnctl ${TAG}" --generate-notes

@@ -31,8 +31,8 @@ func getStaticXPadding(n int) string {
 
 // randIntn returns a non-negative pseudo-random int in [0,n). It wraps math/rand so
 // the transport has a single, easily-auditable randomness entry point. Padding
-// length jitter and session ids are not security-sensitive (they only blur on-wire
-// size signatures), so math/rand is appropriate; tokenish padding CONTENT uses
+// length jitter is not security-sensitive (it only blurs on-wire size
+// signatures), so math/rand is appropriate; session IDs and padding CONTENT use
 // crypto/rand below.
 func randIntn(n int) int {
 	if n <= 0 {
