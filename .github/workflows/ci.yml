@@ -89,7 +89,7 @@ jobs:
                 "h1": 12345678, "h2": 23456789, "h3": 34567890, "h4": 45678901,
                 "random_trailers": true, "disable_cookies": true,
                 "header_protection_key": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "content_padding_addition": "10-50"
+                "content_padding_addition": "10-50", "rekey_after_time": "60-120"
               }
             ],
             "outbounds": [
