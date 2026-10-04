@@ -46,6 +46,9 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	if err := validateJunk(o); err != nil {
 		return "", err
 	}
+	if err := validateRekeyAfterTime(o.RekeyAfterTime); err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	b.Grow(256)
 	writeUint := func(key string, value uint32) {
@@ -166,6 +169,39 @@ func isHex(s string) bool {
 	return true
 }
 
+// The device allocates jc buffers of up to jmax bytes on every handshake
+// initiation, so both are bounded here: a profile must not be able to ask for
+// gigabytes. A junk packet cannot exceed one IPv4 UDP payload anyway.
+const (
+	awgMaxJunkCount = 128
+	awgMaxJunkSize  = 65507
+)
+
+// validateRekeyAfterTime mirrors the device grammar (seconds or an inclusive
+// seconds range) and rejects the full uint32 range, whose width wraps to zero
+// in the device sampler and turns every check into an immediate rekey.
+func validateRekeyAfterTime(value string) error {
+	if value == "" {
+		return nil
+	}
+	low, high, isRange := strings.Cut(value, "-")
+	if !isRange {
+		high = low
+	}
+	lo, err := strconv.ParseUint(low, 10, 32)
+	if err != nil {
+		return E.New("amneziawg: rekey_after_time must be seconds or a seconds range")
+	}
+	hi, err := strconv.ParseUint(high, 10, 32)
+	if err != nil || hi < lo {
+		return E.New("amneziawg: rekey_after_time must be seconds or a seconds range")
+	}
+	if lo == 0 && hi == 1<<32-1 {
+		return E.New("amneziawg: rekey_after_time range is too wide")
+	}
+	return nil
+}
+
 // validateJunk rejects a jmin/jmax junk-size range with jmin > jmax before it
 // reaches the device, so a bad config fails at endpoint build / `sing-box check`
 // with a clear error instead of panicking later at handshake time. The vendored
@@ -178,6 +214,12 @@ func isHex(s string) bool {
 // sizes without jc (junk never sent) are wasteful but harmless and stay allowed,
 // to keep the diff minimal and avoid rejecting a working real-server config.
 func validateJunk(o option.AmneziaWGOptions) error {
+	if o.Jc > awgMaxJunkCount {
+		return E.New("amneziawg: jc must be <= ", strconv.Itoa(awgMaxJunkCount))
+	}
+	if o.Jmax > awgMaxJunkSize {
+		return E.New("amneziawg: jmax must be <= ", strconv.Itoa(awgMaxJunkSize))
+	}
 	if o.Jmin > o.Jmax {
 		return E.New("amneziawg: jmin (", strconv.FormatUint(uint64(o.Jmin), 10), ") must be <= jmax (", strconv.FormatUint(uint64(o.Jmax), 10), ")")
 	}
