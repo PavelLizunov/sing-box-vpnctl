@@ -1,0 +1,164 @@
+name: Verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'verify/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  suite:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: Test embedded WireGuard module
+        working-directory: submodules/wireguard-go
+        run: |
+          go test -count=1 -timeout=240s ./device ./conn
+          go test -race -count=1 -timeout=300s ./device ./conn
+
+      - name: Test fork packages with the race detector
+        run: go test -race -count=5 -timeout=600s -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp -ldflags=-checklinkname=0 ./option ./transport/wireguard ./transport/v2rayxhttp
+
+      - name: Run the whole suite as upstream does
+        run: go test -count=1 -exec sudo -tags "$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" -ldflags "$(cat release/LDFLAGS)" ./...
+
+      - name: Vet fork packages
+        run: go vet -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp ./option ./transport/wireguard ./transport/v2rayxhttp ./transport/v2ray ./protocol/wireguard
+
+  cross:
+    name: Cross-build (${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: arm64, goarm: '' }
+          - { goos: linux, goarch: arm, goarm: '7' }
+          - { goos: windows, goarch: amd64, goarm: '' }
+          - { goos: windows, goarch: arm64, goarm: '' }
+          - { goos: darwin, goarch: amd64, goarm: '' }
+          - { goos: darwin, goarch: arm64, goarm: '' }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Build with the release tags
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
+          test -n "$TAGS"
+          go build -trimpath -tags "$TAGS" \
+            -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=verify" \
+            -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
+          ls -l "$RUNNER_TEMP/sing-box"
+
+  vulnerabilities:
+    name: Known vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Scan reachable code
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
+          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS" ./...
+
+  android:
+    name: Android library
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Setup OpenJDK 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1 (peeled)
+        with:
+          ndk-version: r28
+
+      - name: Install gomobile tools
+        run: |
+          make lib_install
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build libbox.aar
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          make lib_android
+          ls -l libbox*.aar
+          sha256sum libbox*.aar
+
+      - name: Upload the library for device testing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-aar-${{ github.sha }}
+          path: libbox*.aar
+          retention-days: 7
