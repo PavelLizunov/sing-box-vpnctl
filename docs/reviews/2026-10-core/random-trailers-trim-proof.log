@@ -1,0 +1,14 @@
+=== RUN   TestReviewAWGRandomTrailers
+=== PAUSE TestReviewAWGRandomTrailers
+=== CONT  TestReviewAWGRandomTrailers
+--- PASS: TestReviewAWGRandomTrailers (0.06s)
+=== RUN   TestReviewAWGRandomTrailers
+=== PAUSE TestReviewAWGRandomTrailers
+=== CONT  TestReviewAWGRandomTrailers
+--- PASS: TestReviewAWGRandomTrailers (0.05s)
+=== RUN   TestReviewAWGRandomTrailers
+=== PAUSE TestReviewAWGRandomTrailers
+=== CONT  TestReviewAWGRandomTrailers
+--- PASS: TestReviewAWGRandomTrailers (0.05s)
+PASS
+ok  	github.com/sagernet/wireguard-go/device	0.165s

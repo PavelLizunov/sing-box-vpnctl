@@ -162,7 +162,8 @@ type AmneziaWGOptions struct {
 	DisableCookie          *bool  `json:"disable_cookies,omitempty"`
 	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
 	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
-	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
+	// RekeyAfterTime is a seconds value or inclusive range; zero uses the 120s default.
+	RekeyAfterTime string `json:"rekey_after_time,omitempty"`
 }
 
 // IsSet reports whether any AmneziaWG obfuscation parameter has been

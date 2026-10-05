@@ -1,0 +1,6 @@
+=== RUN   TestReviewAWGBasic
+=== PAUSE TestReviewAWGBasic
+=== CONT  TestReviewAWGBasic
+--- PASS: TestReviewAWGBasic (0.05s)
+PASS
+ok  	github.com/sagernet/wireguard-go/device	0.057s

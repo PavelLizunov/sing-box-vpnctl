@@ -276,7 +276,7 @@ again:
 			}
 			sizes[0] = dataLength
 			if dataLength > 3 {
-				if _, resvLoaded := s.reservedForEndpoint[source]; resvLoaded {
+				if s.hasReservedForEndpoint(source) {
 					common.ClearArray(bufs[0][1:4])
 				}
 			}
@@ -384,7 +384,7 @@ func (s *StdNetBind) receiveIP(
 			continue
 		}
 		if msg.N > 3 {
-			if _, resvLoaded := s.reservedForEndpoint[M.AddrPortFromNet(msg.Addr)]; resvLoaded {
+			if s.hasReservedForEndpoint(M.AddrPortFromNet(msg.Addr)) {
 				common.ClearArray(bufs[i][1:4])
 			}
 		}
@@ -566,6 +566,25 @@ retry:
 	return err
 }
 
+func (s *StdNetBind) hasReservedForEndpoint(destination netip.AddrPort) bool {
+	s.reservedAccess.RLock()
+	defer s.reservedAccess.RUnlock()
+
+	if _, loaded := s.reservedForEndpoint[destination]; loaded {
+		return true
+	}
+	addr := destination.Addr()
+	if addr.Is4() {
+		addr = netip.AddrFrom16(addr.As16())
+	} else if addr.Is4In6() {
+		addr = addr.Unmap()
+	} else {
+		return false
+	}
+	_, loaded := s.reservedForEndpoint[netip.AddrPortFrom(addr, destination.Port())]
+	return loaded
+}
+
 func (s *StdNetBind) SetReservedForEndpoint(destination netip.AddrPort, reserved [3]byte) {
 	s.reservedAccess.Lock()
 	s.reservedForEndpoint[destination] = reserved
@@ -588,10 +607,7 @@ func (s *StdNetBind) send(conn *net.UDPConn, pc batchWriter, msgs []ipv6.Message
 		}
 	} else {
 		if supportsMsgX {
-			handled, sendErr := s.sendMsgX(conn, msgs)
-			if handled {
-				return sendErr
-			}
+			return s.sendMsgX(conn, msgs)
 		}
 		for _, msg := range msgs {
 			_, _, err = conn.WriteMsgUDP(msg.Buffers[0], msg.OOB, msg.Addr.(*net.UDPAddr))

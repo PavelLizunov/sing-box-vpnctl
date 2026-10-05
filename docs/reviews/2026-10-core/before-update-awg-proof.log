@@ -1,0 +1,19 @@
+=== RUN   TestReviewAWGBasic
+=== PAUSE TestReviewAWGBasic
+=== RUN   TestReviewAWGRandomTrailers
+=== PAUSE TestReviewAWGRandomTrailers
+=== RUN   TestReviewAWGHeaderProtection
+=== PAUSE TestReviewAWGHeaderProtection
+=== CONT  TestReviewAWGBasic
+=== CONT  TestReviewAWGHeaderProtection
+=== CONT  TestReviewAWGRandomTrailers
+--- PASS: TestReviewAWGBasic (0.05s)
+=== NAME  TestReviewAWGRandomTrailers
+    endpoint_resolver_test.go:253: timed out waiting for endpoint to converge on  127.0.0.1:46415
+=== NAME  TestReviewAWGHeaderProtection
+    endpoint_resolver_test.go:253: timed out waiting for endpoint to converge on  127.0.0.1:48840
+--- FAIL: TestReviewAWGHeaderProtection (2.01s)
+--- FAIL: TestReviewAWGRandomTrailers (2.01s)
+FAIL
+FAIL	github.com/sagernet/wireguard-go/device	2.019s
+FAIL
