@@ -34,8 +34,8 @@ jobs:
       - name: Test vendored WireGuard device (separate Go module)
         working-directory: submodules/wireguard-go
         run: |
-          go test -count=1 -timeout=180s ./device
-          go test -race -count=1 -timeout=240s ./device
+          go test -count=1 -timeout=180s ./device ./conn
+          go test -race -count=1 -timeout=240s ./device ./conn
 
       - name: Test AWG transport integration
         run: go test -tags "with_awg,with_wireguard,with_gvisor" -ldflags="-checklinkname=0" -count=1 -timeout=180s ./transport/wireguard
