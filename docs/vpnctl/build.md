@@ -12,7 +12,7 @@ The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile 
 
 ## Building from source
 
-Go 1.25 or newer.
+Go 1.26 or newer.
 
 ```bash
 git clone \
