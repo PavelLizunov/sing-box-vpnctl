@@ -51,18 +51,6 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 	}
 }
 
-func (c *ClientBind) hasReserved() bool {
-	if c.reserved != [3]uint8{} {
-		return true
-	}
-	for _, reserved := range c.reservedForEndpoint {
-		if reserved != [3]uint8{} {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *ClientBind) connect() (*wireConn, error) {
 	serverConn := c.conn
 	if serverConn != nil {
@@ -147,7 +135,7 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		return
 	}
 	sizes[0] = n
-	if n > 3 && c.hasReserved() {
+	if n > 3 && c.reservedFrom(M.SocksaddrFromNet(addr).Unwrap().AddrPort()) {
 		b := packets[0]
 		clear(b[1:4])
 	}

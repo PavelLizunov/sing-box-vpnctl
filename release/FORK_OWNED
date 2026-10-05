@@ -52,6 +52,6 @@ release/DEFAULT_BUILD_TAGS +1 -1
 release/DEFAULT_BUILD_TAGS_OTHERS +1 -1
 release/DEFAULT_BUILD_TAGS_WINDOWS +1 -1
 transport/v2ray/transport.go +3 -15
-transport/wireguard/client_bind.go +16 -2
+transport/wireguard/client_bind.go +4 -2
 transport/wireguard/endpoint.go +10 -1
 transport/wireguard/endpoint_options.go +2 -0
