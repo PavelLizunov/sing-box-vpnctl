@@ -1,68 +1,57 @@
-# sing-box-vpnctl Architecture Specification
+# Architecture
 
-## 1. Foundation & Maintenance Model
-`sing-box-vpnctl` is a hardened, additive distribution tracking official release tags of **SagerNet/sing-box** (`https://github.com/SagerNet/sing-box.git`), currently based on stable **v1.14.2** (commit `af6e64c3b69e6132ebaee0e1a3d24e93903f6709`). The original v1.14.0 baseline remains an ancestor.
+sing-box-vpnctl is upstream [sing-box](https://github.com/SagerNet/sing-box) plus a layer of its own. The upstream part is taken as it is and replaced with every core update; the layer is the only thing this repository maintains.
 
-### Design Philosophy
-- **Clean Baseline Tracking**: Maintain strict ancestry from official upstream tags. No divergence or rewriting of upstream interfaces.
-- **Additive Extension Layer**: All custom features (XHTTP, AmneziaWG, Anti-Censorship DNS) attach cleanly behind modular interfaces and build tags.
-- **Zero Build-Time Monkey Patching**: In-tree submodules contain all stability patches so clean `go build` works out of the box on all operating systems.
+## The boundary
 
----
+- `release/FORK_UPSTREAM_BASE` names the upstream commit the tree is based on.
+- `release/FORK_OWNED` lists every path that may differ from that commit, in three groups:
+  - **owned**: files the fork added;
+  - **derived**: the embedded WireGuard engine in `submodules/wireguard-go`, a copy of SagerNet wireguard-go with the AmneziaWG device logic. It takes bug fixes only, so that the next port can be compared with its upstream line by line;
+  - **hooks**: upstream files that carry a few fork lines, each with the largest size it may have.
+- `release/fork_boundary_test.py` fails CI when any other file differs from upstream or a hook grows. A fix that seems to belong in an upstream file goes into an owned file and is called through a hook.
 
-## 2. Core Subsystems
+## Where the layer lives
 
-### A. WireGuard / AmneziaWG Engine (`with_awg`)
-The in-tree `submodules/wireguard-go` is rebased on `sagernet/wireguard-go@8bd032a`, preserving all sing-box 1.14.0 internal features (`InputPackets`, `SetSinglePeerMode`, `SetEgressProvider`, `SetIOActivityFuncs`, `AllowedIPs.LookupFromPacket`).
-- **AmneziaWG 2.0**: Handshake and packet framing obfuscation (`Jc`, `Jmin`, `Jmax`, `S1`–`S4`, `H1`–`H4`, `I1`–`I5` CPS, domain masquerade).
-- **AmneziaWG 3.1 Extensions**: `RandomTrailers`, `DisableCookie`, `header_protection_key`, `content_padding_addition`, `rekey_after_time`.
-- **In-Tree Stability & Performance Patches**:
-  - H4 reserved-byte receive-clear gate in both standard socket and Windows WinRing RIO paths (prevents packet misclassification in AWG transport).
-  - Fast-path data packet classification in `DeterminePacketTypeAndPadding` (1.5 ns/op, zero allocs).
-  - Lock-free ChaCha20 header protection cipher (`atomic.Pointer`).
-  - Zero-alloc slice expansions in outbound packet queues.
-  - OOB nil-guard (`golang/go#77875`).
-  - Send retry on `WSAENOBUFS` (10055 on Windows).
-  - `ClientBind` WARP reserved byte preservation for AWG magic headers.
+AmneziaWG:
 
-### B. XHTTP Transport Layer (`with_xhttp`)
-Modular client transport implemented in `transport/v2rayxhttp` and registered via `transport/v2ray/registry.go`:
-- **Modes**: `auto`, `packet-up`, `stream-up`, `stream-one`.
-- **Performance**: Pre-allocated padding string slices (zero heap allocations) and direct URL path formatting without intermediate map encoding.
-- **Race-Free Lifecycle**: Two-phase `watchDialContext` to prevent false cancellations when streams are established concurrently with dial context expiration.
-- **Circuit Breaker (SPEC 076)**: Prevents CPU spinning upon hostile CDN resets.
-- **Graceful GOAWAY Retries**: Replayable request bodies for transparent session survival.
-- **Pool Hygiene (SPEC 059)**: Accurate tracking of pooled connections under load.
+- `option/wireguard_awg.go`: the options and their JSON names.
+- `transport/wireguard/device_awg.go`: validation and translation of the options into device configuration lines. Limits that protect the device (junk sizes, key format, prefix sizes with header protection, rekey range) are enforced here.
+- `transport/wireguard/*_awg.go`: signature packets and protocol masquerade (QUIC Initial, DNS, SIP, STUN).
+- `submodules/wireguard-go/device`: the wire format (prefixes, magic headers, header protection, trailers, content padding). It follows the official amneziawg-go wire format; `go.mod` replaces the wireguard-go module with this directory.
 
-### C. Censorship-Resistant DNS Subsystem
-- **Anti-ECH Protection**: Filtering `query_type: ["HTTPS", "SVCB"]` to mitigate ISP/TSPU RST resets on Cloudflare domains.
-- **Strict Tunnel DNS**: Decoupling DNS resolution from the local network via proxy detours.
-- **FakeIP Engine**: Instant synthetic IP allocation (198.18.0.0/15) bypassing local DNS filtering.
+XHTTP:
 
-### D. Clash API Integrity & V2Ray Stats API (`with_v2ray_api`)
-- **Clash API**: Authenticated HTTP Clash API (`experimental.clash_api`) is preserved across all targets, including Android `libbox.aar`. In addition, `/connections` emits `"user"` in the connection metadata, allowing web interfaces (such as `vpnctl`) to attribute active sessions to specific users.
-- **V2Ray Stats API**: Native gRPC StatsService (`with_v2ray_api`) enabled across all server and desktop builds, supporting cumulative traffic counters per inbound/user.
+- `option/v2ray_xhttp.go`: the options.
+- `transport/v2rayxhttp`: the client (three modes, connection pool with limits and a failure breaker, deadlines).
+- `transport/v2ray/registry.go` and `include/v2rayxhttp.go`: registration behind the `with_xhttp` build tag.
 
----
+Hooks in upstream files are one or a few lines each: the option structs embed the fork options, the endpoint passes them on, the transport switch asks the registry, the Clash API adds `user`, the build tag lists gain `with_awg`, `with_xhttp` and `with_v2ray_api`.
 
-## 3. Release Artifacts & Checksums
-Every GitHub Actions release publishes:
-1. `sing-box-windows-amd64.zip` + `.sha256`
-2. `sing-box-windows-arm64.zip` + `.sha256`
-3. `sing-box-linux-amd64.tar.gz` + `.sha256`
-4. `sing-box-linux-arm64.tar.gz` + `.sha256`
-5. `sing-box-linux-armv7.tar.gz` + `.sha256`
-6. `sing-box-darwin-universal.zip` + `.sha256`
-7. `libbox.aar` (`libbox-${VERSION}.aar`) + `.sha256`
-8. `libbox-legacy.aar` + `.sha256`
-9. `SHA256SUMS` manifest containing all asset hashes
+## Rules for the fork's own code
+
+- Go files of the layer carry no comments, except a single line above a statement that starts with `Invariant:`, `Race:`, `Quirk:` or `Protocol:` and states a reason the code cannot show. CI rejects other new comments (`release/hygiene/`).
+- Dated plans, reviews and logs are not kept in the tree.
+
+## Checks
+
+- `ci.yml`, on every pull request: the fork boundary, the comment rule, tests of the embedded device and bind (also with the race detector), AWG transport tests, security regressions, a build with the release tags and a configuration check.
+- `verify.yml`, on demand or by pushing a `verify/*` branch: the whole upstream test suite, the embedded tests on macOS and Windows, cross-builds for the six release targets, the Android library, a vulnerability report.
+- `release.yml`, on a tag: builds the exact tagged commit, publishes checksums and build attestations, never replaces an existing release.
+
+## Taking a new upstream version
+
+1. Merge the upstream tag into a branch cut from current `main`, and update `release/FORK_UPSTREAM_BASE` in the same change.
+2. Port the changes of SagerNet wireguard-go between the old and the new version into `submodules/wireguard-go`, as separate commits.
+3. Run `verify.yml` on the branch. The boundary test shows every upstream file that still differs.
+4. Check on a test setup that AmneziaWG and XHTTP still pass traffic before tagging a release.
 
 ## History
 
-Dated reviews, task specs and progress logs are not kept in the tree. They stay readable in git at the last commit that held them:
+Dated reviews, task specs and progress logs stay readable in git at the last commit that held them:
 
 ```bash
-git ls-tree -r --name-only 4a5352eb470c92aa8569ceeac4b8d674dfcc980e docs/reviews docs/specs SPECS autoresearch
+git ls-tree -r --name-only 4a5352eb470c92aa8569ceeac4b8d674dfcc980e docs/reviews docs/specs SPECS
 git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:docs/reviews/2026-10-core/core-review.md
 git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:ROADMAP.md
 ```
