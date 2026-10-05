@@ -10,34 +10,10 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-// awgIpcLines renders the AmneziaWG 2.0 device-global obfuscation parameters as
-// amneziawg-go IpcSet config lines, ready to be appended to the WireGuard
-// device configuration (after private_key/listen_port, before peer sections).
-//
-// Output format (one key per line, leading "\n", no trailing newline):
-//
-//	\njc=<n>\njmin=<n>\njmax=<n>\ns1=<n>\ns2=<n>\ns3=<n>\ns4=<n>\nh1=<spec>\nh2=<spec>\nh3=<spec>\nh4=<spec>
-//	\ni1=<str>\ni2=<str>...
-//
-// Numeric keys are emitted only when non-zero. The h1..h4 values are magic
-// header specs — a single uint32 ("N") or an inclusive range ("N-M", AWG 2.0)
-// — emitted in the exact format newMagicHeader expects on the uapi side;
-// unset headers are omitted. The I1..I5 keys are emitted only
-// when non-empty and are written verbatim — their value is case-sensitive
-// (uppercase keywords) and must not be normalised. Returns "" when no AWG
-// parameter is set, so a plain WireGuard endpoint produces byte-identical
-// config to upstream even in a `with_awg` build.
-//
-// These keys correspond to the AmneziaWG handshake-obfuscation knobs parsed by
-// amneziawg-go's device.IpcSetOperation. With `with_awg` the wireguard-go
-// dependency is replaced by amnezia-vpn/amneziawg-go, which understands them;
-// upstream wireguard-go would reject the unknown keys at IpcSet time.
 func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	if !o.IsSet() {
 		return "", nil
 	}
-	// Validate raw values before normalization or masquerade generation can
-	// hide line breaks. Never include their contents in errors.
 	for _, value := range []string{string(o.H1), string(o.H2), string(o.H3), string(o.H4), o.I1, o.I2, o.I3, o.I4, o.I5, o.Id, o.Ip, o.Ib, o.HeaderProtectionKey, o.ContentPaddingAddition, o.RekeyAfterTime} {
 		if strings.ContainsAny(value, "\r\n") {
 			return "", E.New("amneziawg: string options must not contain CR or LF")
@@ -80,11 +56,6 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 		writeStr(key, spec)
 		return nil
 	}
-	// WireSock-style id/ip/ib masquerade is sugar over I1 (and, for ip=quic and
-	// ip=sip, also I2): masqueI1I2 generates both CPS strings in one pass. It
-	// returns "" for both when no masquerade is set, and errors on a conflict
-	// with an explicit I1 or on invalid id/ip/ib. When set, its output is used
-	// as the i1/i2 values below.
 	i1 := o.I1
 	i2 := o.I2
 	masque, masque2, err := masqueI1I2(o)
@@ -93,10 +64,6 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	}
 	if masque != "" {
 		i1 = masque
-		// ip=sip fills i2 with the matching 100 Trying of the INVITE dialog (quic
-		// and dns/stun are single-packet and leave i2 empty). A user-supplied i2
-		// alongside an i2-filling sugar profile is ambiguous, exactly like the i1
-		// conflict masqueI1 already rejects.
 		if masque2 != "" {
 			if o.I2 != "" {
 				return "", E.New("amneziawg: id/ip/ib masquerade (ip=sip) fills i2; an explicit i2 conflicts with it")
@@ -130,7 +97,6 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	writeStr("i4", o.I4)
 	writeStr("i5", o.I5)
 
-	// AmneziaWG 3.1 extensions
 	writeBool := func(key string, value *bool) {
 		if value != nil {
 			b.WriteString("\n")
@@ -169,17 +135,11 @@ func isHex(s string) bool {
 	return true
 }
 
-// The device allocates jc buffers of up to jmax bytes on every handshake
-// initiation, so both are bounded here: a profile must not be able to ask for
-// gigabytes. A junk packet cannot exceed one IPv4 UDP payload anyway.
 const (
 	awgMaxJunkCount = 128
 	awgMaxJunkSize  = 65507
 )
 
-// validateRekeyAfterTime mirrors the device grammar (seconds or an inclusive
-// seconds range) and rejects the full uint32 range, whose width wraps to zero
-// in the device sampler and turns every check into an immediate rekey.
 func validateRekeyAfterTime(value string) error {
 	if value == "" {
 		return nil
@@ -202,17 +162,6 @@ func validateRekeyAfterTime(value string) error {
 	return nil
 }
 
-// validateJunk rejects a jmin/jmax junk-size range with jmin > jmax before it
-// reaches the device, so a bad config fails at endpoint build / `sing-box check`
-// with a clear error instead of panicking later at handshake time. The vendored
-// amneziawg-go (device/send.go) sizes each junk packet rand(0..jmax-jmin)+jmin
-// before a handshake initiation; jmax < jmin makes rand.Int's argument <= 0 and
-// panics in the retransmit-timer goroutine. amneziawg-go's uapi checks each
-// field > 0 individually but not jmin <= jmax, which is why we add it here.
-//
-// Only this crash case is guarded: jc>0 without sizes (sends empty junk) or
-// sizes without jc (junk never sent) are wasteful but harmless and stay allowed,
-// to keep the diff minimal and avoid rejecting a working real-server config.
 func validateJunk(o option.AmneziaWGOptions) error {
 	if o.Jc > awgMaxJunkCount {
 		return E.New("amneziawg: jc must be <= ", strconv.Itoa(awgMaxJunkCount))

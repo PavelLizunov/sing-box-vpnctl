@@ -20,7 +20,6 @@ import (
 )
 
 func TestAWGEndpointStartSecretRedaction(t *testing.T) {
-	// Deliberately synthetic, distinct markers; never use deployed credentials.
 	privateKey := bytes.Repeat([]byte{0xa5}, 32)
 	peerPSK := bytes.Repeat([]byte{0xb6}, 32)
 	headerKey := bytes.Repeat([]byte{0xc7}, 32)
@@ -41,9 +40,6 @@ func TestAWGEndpointStartSecretRedaction(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// A short S prefix with HP would fail awgIpcLines, not Start.
-			// Oversized S1 and malformed padding instead pass JSON and endpoint
-			// construction, then reach the real device's runtime UAPI checks.
 			configJSON := fmt.Sprintf(`{
 				"address": ["192.0.2.1/32"],
 				"private_key": %q,
@@ -100,8 +96,6 @@ func TestAWGEndpointStartSecretRedaction(t *testing.T) {
 			if err == nil {
 				t.Fatal("Start must reject the runtime UAPI configuration")
 			}
-			// Start closes the rejected device before returning. Snapshot under
-			// the mutex because device workers also log during shutdown.
 			capture.mu.Lock()
 			debugLog := strings.Join(capture.debug, "\n")
 			errorLog := strings.Join(capture.errors, "\n")
@@ -176,8 +170,6 @@ func (l *awgSecretCaptureLogger) ErrorContext(_ context.Context, args ...any) {
 	l.Error(args...)
 }
 
-// The real userspace device may start its receive loop before IpcSet rejects
-// the config. Block until bind shutdown without opening a socket or doing DNS.
 type awgSecretNoNetworkDialer struct{}
 
 func (awgSecretNoNetworkDialer) DialContext(ctx context.Context, _ string, _ M.Socksaddr) (net.Conn, error) {

@@ -12,17 +12,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
-// SPECS/TASKS/050-URLTEST_ZOMBIE_RUN_SURVIVES_RESTART
-//
-// A half-alive XHTTP node — one that accepts the TCP connection but never reads
-// the request body — used to block a writer forever: the streamed conn hands
-// itself up before RoundTrip has raised the stream, the body is an io.Pipe, and
-// nothing on the conn could interrupt a pending Write. These tests pin the two
-// escapes: a write deadline, and cancellation of the dial context.
-
-// hangingTransport models the half-alive server: the TCP connection is accepted
-// (RoundTrip is entered) but the response never arrives and the request body is
-// never read, so the upload pipe has no reader.
 type hangingTransport struct {
 	entered chan struct{}
 	release chan struct{}
@@ -49,7 +38,6 @@ func (t *hangingTransport) Close() error {
 	return nil
 }
 
-// hangingClient builds a stream-one client whose transport never reads the body.
 func hangingClient(t *testing.T) (*Client, *hangingTransport) {
 	t.Helper()
 	meta, err := normalizeMeta(metaOptions{}, modeStreamOne)
@@ -69,13 +57,11 @@ func hangingClient(t *testing.T) (*Client, *hangingTransport) {
 	return client, transport
 }
 
-// writeResult carries the outcome of a Write issued from a helper goroutine.
 type writeResult struct {
 	n   int
 	err error
 }
 
-// writeAsync issues a blocking Write on conn and reports the outcome.
 func writeAsync(conn interface{ Write([]byte) (int, error) }) <-chan writeResult {
 	done := make(chan writeResult, 1)
 	go func() {
@@ -85,9 +71,6 @@ func writeAsync(conn interface{ Write([]byte) (int, error) }) <-chan writeResult
 	return done
 }
 
-// TestStreamOneWriteDeadlineUnblocksWrite is the core of the bug: without a
-// working SetWriteDeadline a Write into the upload pipe of a half-alive node
-// never returns, and the goroutine holding it outlives the whole box.
 func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	client, transport := hangingClient(t)
 	defer transport.Close()
@@ -118,9 +101,6 @@ func TestStreamOneWriteDeadlineUnblocksWrite(t *testing.T) {
 	}
 }
 
-// TestStreamOneDialCancelUnblocksWrite covers the path that the URL test itself
-// takes: the encryption handshake runs on a bare net.Conn with no context, so
-// cancelling the dial context is what has to free a pending Write.
 func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
 	client, transport := hangingClient(t)
 	defer transport.Close()
@@ -156,8 +136,6 @@ func TestStreamOneDialCancelUnblocksWrite(t *testing.T) {
 	}
 }
 
-// liveTransport answers immediately and keeps reading the request body, which is
-// what a healthy XHTTP server does.
 type liveTransport struct {
 	body io.ReadCloser
 }
@@ -167,10 +145,6 @@ func (t *liveTransport) RoundTrip(request *http.Request) (*http.Response, error)
 	return &http.Response{StatusCode: http.StatusOK, Body: t.body}, nil
 }
 
-// TestStreamOneCancelAfterStreamUpKeepsConnAlive is the R4 guard for the dial
-// watcher: cancelling the dial context is routine once the stream is up (the
-// caller's dial is over), and it must not tear the connection down. A watcher
-// that outlived `created` would break every live stream-one connection.
 func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 	bodyReader, bodyWriter := io.Pipe()
 	defer bodyWriter.Close()
@@ -197,8 +171,6 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Wait for the stream to be up, then cancel: this is the normal lifecycle of
-	// a dial context, not an abort.
 	streamConn := conn.(*streamConn)
 	<-streamConn.created
 	cancel()
@@ -213,8 +185,6 @@ func TestStreamOneCancelAfterStreamUpKeepsConnAlive(t *testing.T) {
 	}
 }
 
-// TestStreamOneDeadlineDoesNotBreakLiveConn guards R4: once the stream is up the
-// dial context is done, and that must not disturb a working connection.
 func TestStreamOneDeadlineDoesNotBreakLiveConn(t *testing.T) {
 	pipeReader, pipeWriter := io.Pipe()
 	conn := newStreamConn(pipeReader, pipeWriter, M.ParseSocksaddr("example.com:443"), nil)

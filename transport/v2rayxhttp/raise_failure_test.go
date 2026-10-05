@@ -18,25 +18,6 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
-// This file pins the raise-failure contract (lx: SPEC 072): a dial whose HTTP
-// side fails — RoundTrip error, non-200 status, dead pooled connection — must
-// break the upload pipe so a blocked or future Write returns the failure
-// instead of hanging forever. The field dump behind it (2026-08-17, core
-// lx.27-rc.2) shows the pre-fix behaviour: the SPEC 050 dial-context guard
-// stands down when `created` closes, and the error branches of setupReader
-// closed `created` without breaking the pipe — a VLESS handshake Write then
-// blocked for 38 minutes on a pipe nobody would ever read, welding the WG
-// bind, the pause chain and the endpoint manager into a process-wide freeze.
-//
-// The second half of the contract is conn lifetime (also SPEC 072): requests
-// ride a conn-scoped context under the transport's lifetime ctx, NOT the dial
-// context — a bounded dial context (the WG bind dials with C.TCPTimeout since
-// SPEC 071) must stop bounding the stream the moment it is raised, otherwise
-// every healthy detour conn is torn down at the deadline and the endpoint
-// cycles every 15 s.
-
-// stubClient assembles a Client around a fixed RoundTripper, the same way
-// h2cClient does but without a live server.
 func stubClient(t *testing.T, mode string, transport http.RoundTripper) *Client {
 	t.Helper()
 	meta, err := normalizeMeta(metaOptions{}, mode)
@@ -57,9 +38,6 @@ func stubClient(t *testing.T, mode string, transport http.RoundTripper) *Client 
 	}
 }
 
-// errorRoundTripper fails every request without touching the body — the shape
-// of a dead pooled connection (x/net http2 does not close the request body
-// when it errors before adopting the request).
 type errorRoundTripper struct {
 	err error
 }
@@ -68,8 +46,6 @@ func (rt errorRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 	return nil, rt.err
 }
 
-// statusRoundTripper answers every request with a fixed status and an empty
-// body, never reading the request body.
 type statusRoundTripper struct {
 	code int
 }
@@ -83,8 +59,6 @@ func (rt statusRoundTripper) RoundTrip(request *http.Request) (*http.Response, e
 	}, nil
 }
 
-// methodRoundTripper routes requests by method, so stream-up's paired GET/POST
-// can fail independently.
 type methodRoundTripper struct {
 	get  http.RoundTripper
 	post http.RoundTripper
@@ -97,9 +71,6 @@ func (rt methodRoundTripper) RoundTrip(request *http.Request) (*http.Response, e
 	return rt.post.RoundTrip(request)
 }
 
-// hangRoundTripper parks every request until its context dies, recording that
-// it observed the cancellation. It never reads the request body — the pipe
-// stays unread, exactly like a wedged pooled connection.
 type hangRoundTripper struct {
 	observed atomic.Int32
 }
@@ -110,7 +81,6 @@ func (rt *hangRoundTripper) RoundTrip(request *http.Request) (*http.Response, er
 	return nil, request.Context().Err()
 }
 
-// writeUnderTest runs one conn.Write in a goroutine and reports its result.
 func writeUnderTest(conn net.Conn, payload []byte) <-chan error {
 	result := make(chan error, 1)
 	go func() {
@@ -122,10 +92,6 @@ func writeUnderTest(conn net.Conn, payload []byte) <-chan error {
 
 const writeFreeBudget = 3 * time.Second
 
-// TestStreamOneWriteFreedOnRoundTripError: a stream-one dial whose RoundTrip
-// fails must free the handshake Write with that error. Red on the pre-fix
-// base: the guard stands down on `created`, nobody reads the pipe, the Write
-// hangs past any budget.
 func TestStreamOneWriteFreedOnRoundTripError(t *testing.T) {
 	t.Parallel()
 	dialErr := errors.New("pooled connection is dead")
@@ -149,7 +115,6 @@ func TestStreamOneWriteFreedOnRoundTripError(t *testing.T) {
 	}
 }
 
-// TestStreamOneWriteFreedOnBadStatus: same contract for a non-200 response.
 func TestStreamOneWriteFreedOnBadStatus(t *testing.T) {
 	t.Parallel()
 	client := stubClient(t, modeStreamOne, statusRoundTripper{code: http.StatusBadGateway})
@@ -169,9 +134,6 @@ func TestStreamOneWriteFreedOnBadStatus(t *testing.T) {
 	}
 }
 
-// TestStreamUpWriteFreedOnDownloadError: stream-up's download GET failing must
-// break the upload pipe even while the upload POST is still pending — the conn
-// can never carry protocol bytes once the download side is dead.
 func TestStreamUpWriteFreedOnDownloadError(t *testing.T) {
 	t.Parallel()
 	downErr := errors.New("download stream refused")
@@ -196,15 +158,12 @@ func TestStreamUpWriteFreedOnDownloadError(t *testing.T) {
 	}
 }
 
-// TestStreamUpWriteCarriesUploadError: when the upload POST itself fails, the
-// blocked writer must see that error, not a bare io.ErrClosedPipe (the read
-// half is the side that surfaces an error to a pipe writer).
 func TestStreamUpWriteCarriesUploadError(t *testing.T) {
 	t.Parallel()
 	upErr := errors.New("upload stream refused")
 	hang := &hangRoundTripper{}
 	client := stubClient(t, modeStreamUp, methodRoundTripper{
-		get:  hang, // download pending: isolates the upload-failure path
+		get:  hang,
 		post: errorRoundTripper{err: upErr},
 	})
 	conn, err := client.DialContext(context.Background())
@@ -226,10 +185,6 @@ func TestStreamUpWriteCarriesUploadError(t *testing.T) {
 	}
 }
 
-// echoServer is an h2c server that raises every stream immediately: uploads
-// are drained, downloads answer 200 and echo a banner. It stands in for a
-// healthy XHTTP server so conn-lifetime tests can watch what a DIAL context
-// deadline does to a LIVE conn.
 func echoServer(t *testing.T) string {
 	t.Helper()
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -241,8 +196,6 @@ func echoServer(t *testing.T) string {
 			<-r.Context().Done()
 			return
 		}
-		// Upload (or stream-one): echo the request body back chunk by chunk, so
-		// stream-one gets a live downlink and packet-up posts drain.
 		buffer := make([]byte, 4096)
 		for {
 			n, err := r.Body.Read(buffer)
@@ -265,7 +218,6 @@ func echoServer(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-// liveH2CClient builds a Client with a real h2c transport at addr, mode given.
 func liveH2CClient(t *testing.T, addr, mode string) *Client {
 	t.Helper()
 	meta, err := normalizeMeta(metaOptions{}, mode)
@@ -291,12 +243,6 @@ func liveH2CClient(t *testing.T, addr, mode string) *Client {
 	}
 }
 
-// TestStreamOneConnSurvivesDialContextExpiry: a raised stream-one conn must
-// outlive its dial context's deadline. Red on the pre-fix base: the request
-// rides the dial context, so http2 aborts the live stream the moment the
-// deadline fires — with the WG bind's C.TCPTimeout dial bound (SPEC 071) that
-// tore down every healthy detour conn 15 s after connect, and the endpoint
-// reconnected in a permanent cycle.
 func TestStreamOneConnSurvivesDialContextExpiry(t *testing.T) {
 	t.Parallel()
 	addr := echoServer(t)
@@ -310,8 +256,6 @@ func TestStreamOneConnSurvivesDialContextExpiry(t *testing.T) {
 	}
 	defer conn.Close()
 
-	// Raise the stream and verify it is live before the deadline (the server
-	// echoes the uplink).
 	if _, err := conn.Write([]byte("hello")); err != nil {
 		t.Fatalf("Write before deadline: %v", err)
 	}
@@ -320,9 +264,8 @@ func TestStreamOneConnSurvivesDialContextExpiry(t *testing.T) {
 		t.Fatalf("Read before deadline: %v", err)
 	}
 
-	// Let the dial deadline fire, then prove the conn is still alive.
 	<-dialCtx.Done()
-	time.Sleep(200 * time.Millisecond) // give an (incorrect) abort time to land
+	time.Sleep(200 * time.Millisecond)
 
 	if _, err := conn.Write([]byte("after deadline")); err != nil {
 		t.Fatalf("Write after dial deadline: %v — dial ctx still bounds the live stream", err)
@@ -335,9 +278,6 @@ func TestStreamOneConnSurvivesDialContextExpiry(t *testing.T) {
 	}
 }
 
-// TestPacketUpPostsSurviveDialContextExpiry: packet-up posts must not inherit
-// the dial context either — every upload POST after the dial deadline failed
-// with context deadline exceeded on the pre-fix base.
 func TestPacketUpPostsSurviveDialContextExpiry(t *testing.T) {
 	t.Parallel()
 	addr := echoServer(t)
@@ -361,13 +301,7 @@ func TestPacketUpPostsSurviveDialContextExpiry(t *testing.T) {
 	}
 }
 
-// TestPacketUpPostBounded: a single upload POST must be bounded even though
-// posts no longer ride the (possibly bounded) dial context — a wedged pooled
-// connection costs one post timeout, not a forever-blocked Write inside the
-// WG send path.
 func TestPacketUpPostBounded(t *testing.T) {
-	// NOT parallel: overrides packetUpPostTimeout, and a write to the package
-	// var must not race the parallel tests that read it.
 	restore := packetUpPostTimeout
 	packetUpPostTimeout = 500 * time.Millisecond
 	t.Cleanup(func() { packetUpPostTimeout = restore })
@@ -390,11 +324,6 @@ func TestPacketUpPostBounded(t *testing.T) {
 	}
 }
 
-// TestPacketUpCloseAbortsPendingDownload: closing a packet-up conn must abort
-// the pending download RoundTrip. Pre-fix that teardown belonged to the dial
-// context ("the pending RoundTrip is torn down via the dial context instead"),
-// which an unbounded dial context never fires — the RoundTrip goroutine
-// leaked until box shutdown.
 func TestPacketUpCloseAbortsPendingDownload(t *testing.T) {
 	t.Parallel()
 	hang := &hangRoundTripper{}

@@ -60,8 +60,6 @@ func TestMagicHeaderUnmarshalError(t *testing.T) {
 	}
 }
 
-// The config decoder (sing contextjson) prefixes errors with the JSON path,
-// so a bad value reports the exact field: `h1: invalid magic header ...`.
 func TestMagicHeaderErrorNamesField(t *testing.T) {
 	t.Parallel()
 	var options option.AmneziaWGOptions
@@ -90,8 +88,6 @@ func TestMagicHeaderMarshal(t *testing.T) {
 	}
 }
 
-// Existing configs hold plain numbers in h1..h4; they must read identically
-// and re-marshal back to numbers (type fidelity with the former uint32 field).
 func TestAmneziaWGOptionsRoundTrip(t *testing.T) {
 	t.Parallel()
 	legacy := `{"jc":4,"jmin":40,"jmax":70,"h1":1,"h2":2,"h3":3,"h4":4,"i1":"<b 0xf6>"}`
@@ -133,7 +129,6 @@ func TestMagicHeaderSpec(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "", spec)
 
-	// Programmatically constructed (bypassing JSON) garbage must still fail.
 	_, err = option.MagicHeader("junk").Spec()
 	require.Error(t, err)
 	_, err = option.MagicHeader("100-50").Spec()

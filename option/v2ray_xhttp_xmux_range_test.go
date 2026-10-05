@@ -6,12 +6,6 @@ import (
 	"github.com/sagernet/sing/common/json"
 )
 
-// SPECS/TASKS/059-XHTTP_XMUX §3
-//
-// xmux sections travel inside subscription configs authored against Xray and
-// sing-box-extended, which spell ranges as arrays. Our own XHTTP options spell
-// them as "min-max" strings. A config that uses either spelling must load, and
-// must mean the same thing.
 func TestXmuxRangeUnmarshal(t *testing.T) {
 	testCases := []struct {
 		name     string
@@ -58,8 +52,6 @@ func TestXmuxRangeUnmarshalRejects(t *testing.T) {
 	}
 }
 
-// TestXmuxOptionsRoundTrip: a whole xmux section in the Xray spelling must load,
-// and an unset section must stay absent when the config is written back out.
 func TestXmuxOptionsRoundTrip(t *testing.T) {
 	const input = `{"max_concurrency":[2,8],"h_max_request_times":"600-900","h_keep_alive_period":30}`
 	var options V2RayXHTTPXmuxOptions

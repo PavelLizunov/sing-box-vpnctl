@@ -1,14 +1,5 @@
 package v2ray
 
-// lx: client transport registry.
-//
-// Upstream selects the client transport with a hardcoded switch in
-// NewClientTransport (transport.go). sing-box-lx replaces that switch with this
-// registry so downstream transports (e.g. XHTTP) register themselves via init()
-// behind a build tag, keeping the recurring diff to upstream files near zero.
-// The built-in transports below reproduce upstream's switch behavior exactly,
-// including the QUIC TLS-required check. See SPECS/TASKS/002.
-
 import (
 	"context"
 
@@ -23,20 +14,14 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// ClientTransportConstructor builds a client transport from the full
-// V2RayTransportOptions (each transport reads its own sub-options field).
 type ClientTransportConstructor func(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayTransportOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error)
 
 var clientTransportRegistry = make(map[string]ClientTransportConstructor)
 
-// RegisterClient registers a client transport constructor for the given type.
-// Built-in types are registered below; downstream types (xhttp) register from
-// their own package under a build tag.
 func RegisterClient(transportType string, constructor ClientTransportConstructor) {
 	clientTransportRegistry[transportType] = constructor
 }
 
-// lookupClientTransport returns the constructor for a transport type, if any.
 func lookupClientTransport(transportType string) (ClientTransportConstructor, bool) {
 	constructor, loaded := clientTransportRegistry[transportType]
 	return constructor, loaded

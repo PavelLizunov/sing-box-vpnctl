@@ -15,13 +15,8 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
-// xrayLikeServer models the half of the XHTTP server contract that made
-// packet-up/stream-up deadlock: the stream-down response is withheld until the
-// paired uplink for the same session has been received. Xray behaves this way
-// because it has nothing to send downstream before the session carries traffic;
-// a reverse proxy in front (nginx/CDN) turns the resulting stall into a 504.
 type xrayLikeServer struct {
-	uplinkSeen chan struct{} // closed by the first upload request
+	uplinkSeen chan struct{}
 	server     *http.Server
 	addr       string
 }
@@ -31,12 +26,8 @@ func newXrayLikeServer(t *testing.T) *xrayLikeServer {
 	s := &xrayLikeServer{uplinkSeen: make(chan struct{})}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// An upload carries either a seq (packet-up) or a request body
-		// (stream-up, where the streamed body makes ContentLength -1/chunked).
 		isUpload := r.URL.Query().Get("chunk_id") != "" || r.ContentLength != 0 || r.Method != http.MethodGet
 		if isUpload {
-			// Read just the first chunk: a stream-up body never ends, so
-			// draining it fully would hang the handler before it can signal.
 			buffer := make([]byte, 1)
 			r.Body.Read(buffer)
 			select {
@@ -47,14 +38,11 @@ func newXrayLikeServer(t *testing.T) *xrayLikeServer {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		// Download: withhold the response until an uplink shows up. This is the
-		// exact ordering the old synchronous dial could never satisfy.
 		select {
 		case <-s.uplinkSeen:
 		case <-r.Context().Done():
 			return
 		case <-time.After(10 * time.Second):
-			// Stand-in for the fronting proxy's upstream timeout.
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
@@ -75,9 +63,6 @@ func newXrayLikeServer(t *testing.T) *xrayLikeServer {
 	return s
 }
 
-// h2cClient builds a Client speaking cleartext HTTP/2 at addr, shaped like the
-// CDN-VK config that exposed the deadlock: packet-up, session in a header, seq
-// in a query parameter.
 func h2cClient(t *testing.T, addr, mode string) *Client {
 	t.Helper()
 	meta, err := normalizeMeta(metaOptions{
@@ -108,12 +93,6 @@ func h2cClient(t *testing.T, addr, mode string) *Client {
 	}
 }
 
-// TestDialDoesNotBlockOnDownloadResponse is the regression guard for the
-// packet-up / stream-up deadlock. Against a server that answers stream-down only
-// after the first uplink, a dial that waits for the download response before
-// letting the caller write can never complete — it stalls until the fronting
-// proxy returns 504. The dial must hand the conn up immediately so the first
-// Write can unblock the download.
 func TestDialDoesNotBlockOnDownloadResponse(t *testing.T) {
 	for _, mode := range []string{modePacketUp, modeStreamUp} {
 		t.Run(mode, func(t *testing.T) {
@@ -144,7 +123,6 @@ func TestDialDoesNotBlockOnDownloadResponse(t *testing.T) {
 			}
 			defer conn.Close()
 
-			// The write is what releases the server's download response.
 			if _, err := conn.Write([]byte("uplink")); err != nil {
 				t.Fatalf("write: %v", err)
 			}
