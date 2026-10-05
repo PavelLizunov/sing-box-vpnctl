@@ -56,3 +56,13 @@ Every GitHub Actions release publishes:
 7. `libbox.aar` (`libbox-${VERSION}.aar`) + `.sha256`
 8. `libbox-legacy.aar` + `.sha256`
 9. `SHA256SUMS` manifest containing all asset hashes
+
+## History
+
+Dated reviews, task specs and progress logs are not kept in the tree. They stay readable in git at the last commit that held them:
+
+```bash
+git ls-tree -r --name-only 4a5352eb470c92aa8569ceeac4b8d674dfcc980e docs/reviews docs/specs SPECS autoresearch
+git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:docs/reviews/2026-10-core/core-review.md
+git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:ROADMAP.md
+```
