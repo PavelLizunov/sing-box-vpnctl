@@ -268,6 +268,7 @@ func (s *StdNetBind) makeReceiveMsgX(conn *net.UDPConn, isV6 bool) (ReceiveFunc,
 		if s.msgx.connectedFlag(isV6).Load() {
 			connectedEndpoint = s.msgx.endpoint.Load()
 		}
+		connectedReserved := connectedEndpoint != nil && s.hasReservedForEndpoint(connectedEndpoint.AddrPort)
 		count := len(bufs)
 		if count > msgXBatchSize {
 			count = msgXBatchSize
@@ -315,6 +316,9 @@ func (s *StdNetBind) makeReceiveMsgX(conn *net.UDPConn, isV6 bool) (ReceiveFunc,
 		for i := 0; i < numMsgs; i++ {
 			sizes[i] = int(state.hdrs[i].DataLen)
 			if connectedEndpoint != nil {
+				if sizes[i] > 3 && connectedReserved {
+					bufs[i][1], bufs[i][2], bufs[i][3] = 0, 0, 0
+				}
 				eps[i] = connectedEndpoint
 				continue
 			}
@@ -330,10 +334,7 @@ func (s *StdNetBind) makeReceiveMsgX(conn *net.UDPConn, isV6 bool) (ReceiveFunc,
 			}
 			// Preserve AWG magic headers unless this peer uses reserved bytes.
 			if sizes[i] > 3 {
-				s.reservedAccess.RLock()
-				_, reserved := s.reservedForEndpoint[addrPort]
-				s.reservedAccess.RUnlock()
-				if reserved {
+				if s.hasReservedForEndpoint(addrPort) {
 					bufs[i][1], bufs[i][2], bufs[i][3] = 0, 0, 0
 				}
 			}
