@@ -28,8 +28,8 @@ jobs:
       - name: Check that no comments were added to the fork's own files
         if: github.event_name == 'pull_request'
         run: |
-          python3 release/hygiene/fork_scope.py --upstream "$(cut -d' ' -f1 release/FORK_UPSTREAM_BASE)" --derived submodules/wireguard-go --list FORK_ADDED | grep -v '^release/hygiene/' > "$RUNNER_TEMP/fork-owned.txt"
-          python3 release/hygiene/added_comments.py --base "origin/${{ github.base_ref }}" --max 0 --allow '^\s*// (Invariant|Race|Quirk|Protocol): ' --paths-from "$RUNNER_TEMP/fork-owned.txt"
+          python3 -B release/hygiene/fork_scope.py --upstream "$(cut -d' ' -f1 release/FORK_UPSTREAM_BASE)" --derived submodules/wireguard-go --list FORK_ADDED | grep -v '^release/hygiene/' > "$RUNNER_TEMP/fork-owned.txt"
+          python3 -B release/hygiene/added_comments.py --base "origin/${{ github.base_ref }}" --max 0 --allow '^\s*// (Invariant|Race|Quirk|Protocol): ' --paths-from "$RUNNER_TEMP/fork-owned.txt"
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
