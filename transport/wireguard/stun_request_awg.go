@@ -1,5 +1,6 @@
 //go:build with_awg
 
+// Protocol: A client's first STUN packet is a Binding Request; a Success Response requires a prior request.
 package wireguard
 
 import (
@@ -65,6 +66,7 @@ func buildSTUNBindingRequest() ([]byte, error) {
 	attrs = appendSTUNAttr(attrs, stunAttrPriority, prio)
 	attrs = appendSTUNAttr(attrs, stunAttrSoftware, []byte(stunSoftwareProduct))
 
+	// Protocol: The STUN header length includes MESSAGE-INTEGRITY during HMAC calculation but excludes later attributes.
 	const miAttrTotal = 24
 	header := make([]byte, 20)
 	binary.BigEndian.PutUint16(header[0:], stunTypeBindingRequest)
@@ -78,6 +80,7 @@ func buildSTUNBindingRequest() ([]byte, error) {
 	mi := mac.Sum(nil)
 	withMI := appendSTUNAttr(preMI, stunAttrMsgIntegrity, mi)
 
+	// Protocol: The STUN fingerprint CRC excludes its own attribute, but the header length includes that attribute.
 	const fpAttrTotal = 8
 	binary.BigEndian.PutUint16(withMI[2:], uint16(len(attrs)+miAttrTotal+fpAttrTotal))
 	crc := crc32.ChecksumIEEE(withMI) ^ stunFingerprintXOR

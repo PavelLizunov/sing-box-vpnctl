@@ -134,6 +134,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 		host = serverAddr.String()
 	}
 
+	// Quirk: Preserve trailing slashes because reverse proxies may redirect bare paths and download requests ignore redirects.
 	path := options.Path
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path

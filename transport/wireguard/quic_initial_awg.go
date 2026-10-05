@@ -39,6 +39,7 @@ const (
 	quicDCIDLen         = 8
 )
 
+// Protocol: DPI evasion requires the first CRYPTO frame to have a nonzero offset and the offset-zero frame to arrive later.
 type frameKind int
 
 const (
@@ -284,6 +285,7 @@ func deriveInitialKeys(dcid []byte) (key, iv, hp []byte) {
 
 func encryptInitial(header, payload, key, iv, hp []byte, pnOffset int, pn uint64) ([]byte, error) {
 	cipher := quicAEADAESGCMTLS13(key, iv)
+	// Quirk: The AEAD accepts an 8-byte packet number and XORs it into the IV internally.
 	nonce := make([]byte, cipher.NonceSize())
 	binary.BigEndian.PutUint64(nonce[cipher.NonceSize()-8:], pn)
 	ciphertext := cipher.Seal(nil, nonce, payload, header)
@@ -398,6 +400,7 @@ func pickTotalLen(p quicGenParams) (int, error) {
 	return lo + d, nil
 }
 
+// Invariant: The DCID stays fixed after encryption because it determines the Initial keys.
 func masqueQUICInitialCPS(domain, browser string) (string, error) {
 	packet, err := buildInitialPacket(domain, browser, defaultQUICGenParams())
 	if err != nil {

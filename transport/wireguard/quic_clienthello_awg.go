@@ -8,6 +8,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
+// Invariant: ClientHello must exceed 290 bytes so the final fragment at the fixed cutpoints is non-empty.
 const quicCHTargetLen = 294
 
 const quicCHMinLen = 291
@@ -23,6 +24,7 @@ func appendExtension(dst []byte, extType uint16, data []byte) []byte {
 	return append(dst, data...)
 }
 
+// Quirk: uTLS has no curl QUIC fingerprint, so curl uses the generic ClientHello.
 func buildClientHello(sni string, tlsRandom [32]byte, x25519Pub []byte, browser string) ([]byte, error) {
 	switch browser {
 	case masqueBrowserChrome, masqueBrowserFirefox:

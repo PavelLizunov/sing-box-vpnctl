@@ -165,6 +165,7 @@ var predefinedSessionTables = map[string]string{
 	"number":   "0123456789",
 }
 
+// Invariant: Session IDs need at least 2^31 combinations to prevent independent clients from sharing a server-side session.
 const minSessionIDSpace int64 = 1 << 31
 
 func resolveSessionID(table, length string) (string, intRange, error) {
@@ -322,10 +323,12 @@ func parseRange(raw, field string) (intRange, error) {
 	return intRange{minV, maxV}, nil
 }
 
+// Protocol: Path metadata puts the session ID before the sequence number because the server reads segments positionally.
 func (c *Client) applyMeta(request *http.Request, basePath, sessionID, seqStr string) {
 	m := &c.meta
 	path := basePath
 
+	// Quirk: Path placement requires a trailing slash even without a session ID because the server prefix-matches it.
 	if sessionID == "" {
 		path = barePathForStreamOne(path, m)
 	} else {
@@ -372,6 +375,7 @@ func (c *Client) applyUplinkData(request *http.Request, payload []byte) {
 		request.Body = readCloser{&byteReader{data: payload}}
 		request.Header.Set("Content-Type", "application/octet-stream")
 		request.ContentLength = int64(len(payload))
+		// Quirk: A replayable body allows the transport to retry uploads after graceful GOAWAY without killing the session.
 		request.GetBody = func() (io.ReadCloser, error) {
 			return readCloser{&byteReader{data: payload}}, nil
 		}

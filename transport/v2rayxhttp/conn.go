@@ -16,6 +16,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
+// Invariant: Each upload POST needs its own timeout because its context outlives the dial and can block writes indefinitely.
 var packetUpPostTimeout = C.TCPTimeout
 
 func (c *Client) transportContext() context.Context {
@@ -25,6 +26,7 @@ func (c *Client) transportContext() context.Context {
 	return context.Background()
 }
 
+// Quirk: Streaming requests need a gRPC content type to prevent proxies from buffering the response and stalling the dial.
 func (c *Client) applyGRPCHeader(request *http.Request) {
 	if c.noGRPCHeader || request.Body == nil {
 		return
@@ -32,9 +34,11 @@ func (c *Client) applyGRPCHeader(request *http.Request) {
 	request.Header.Set("Content-Type", "application/grpc")
 }
 
+// Protocol: An empty session ID selects the bidirectional stream; a nonempty ID selects the download-only branch.
 func (c *Client) dialStreamOne(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	_ = sessionID
 	pipeReader, pipeWriter := io.Pipe()
+	// Invariant: Requests use a connection-scoped context so a dial deadline cannot abort an established stream.
 	connCtx, connCancel := context.WithCancel(c.transportContext())
 	request, err := c.newRequest(connCtx, c.meta.uplinkHTTPMethod, "", "", pipeReader)
 	if err != nil {
@@ -140,6 +144,7 @@ func (c *Client) dialStreamUp(ctx context.Context, sessionID string, xmuxClient 
 	return conn, nil
 }
 
+// Quirk: Waiting for download headers before allowing uploads deadlocks peers that await the first upload.
 func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient *xmuxClient) (net.Conn, error) {
 	_ = ctx
 	connCtx, connCancel := context.WithCancel(c.transportContext())
@@ -230,6 +235,7 @@ func (d *readDeadline) set(t time.Time) error {
 		d.timer = time.AfterFunc(delay, d.expire)
 	}
 	d.access.Unlock()
+	// Race: The expiry callback runs outside the deadline lock because closing the response body can block.
 	if fire {
 		d.runOnExpire()
 	}
@@ -329,6 +335,7 @@ func (c *streamConn) setupReader(reader io.ReadCloser, err error) {
 	close(c.created)
 }
 
+// Invariant: Failed dials must cancel the request and release the pooled connection because callers may never close them.
 func (c *streamConn) fail(err error) {
 	c.setupReader(nil, err)
 	c.writeDeadline.reader.CloseWithError(err)
@@ -339,6 +346,7 @@ func (c *streamConn) fail(err error) {
 }
 
 func (c *streamConn) Read(b []byte) (int, error) {
+	// Race: Receiving from created must precede reading reader or readerErr to synchronize with their initialization.
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
@@ -390,6 +398,7 @@ func (c *streamConn) SetDeadline(t time.Time) error {
 func (c *streamConn) SetReadDeadline(t time.Time) error  { return c.readDeadline.set(t) }
 func (c *streamConn) SetWriteDeadline(t time.Time) error { return c.writeDeadline.set(t) }
 
+// Quirk: Keep the read-deadline wrapper because closing the body on expiry cannot support subsequent reads.
 func (c *streamConn) NeedAdditionalReadDeadline() bool { return true }
 
 type splitConn struct {
@@ -466,6 +475,7 @@ func (c *splitConn) fail(err error) {
 	c.xmux.release()
 }
 
+// Quirk: Close the pipe's read half with the upload error; closing its write half gives writers only ErrClosedPipe.
 func (c *splitConn) uploadFailed(err error) {
 	c.fail(err)
 }
@@ -603,6 +613,7 @@ func (c *packetConn) fail(err error) {
 }
 
 func (c *packetConn) Read(b []byte) (int, error) {
+	// Race: Wait for created to close before reading reader or readerErr; the channel publishes both fields.
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
@@ -658,6 +669,7 @@ func (c *packetConn) sendPacket(b []byte) error {
 
 	payload := make([]byte, len(b))
 	copy(payload, b)
+	// Invariant: Each upload needs its own timeout so a stalled pooled connection cannot block Write indefinitely.
 	postCtx, postCancel := context.WithTimeout(c.ctx, packetUpPostTimeout)
 	defer postCancel()
 	request, err := c.client.newRequest(postCtx, c.client.meta.uplinkHTTPMethod, c.sessionID, strconv.FormatUint(seq, 10), nil)
@@ -713,6 +725,7 @@ func (c *packetConn) Close() error {
 		if c.cancel != nil {
 			c.cancel()
 		}
+		// Invariant: Release the pooled connection only after reads stop and no further upload can start.
 		c.xmux.release()
 	})
 	return err

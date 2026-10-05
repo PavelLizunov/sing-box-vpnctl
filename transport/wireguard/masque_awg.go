@@ -127,6 +127,7 @@ const (
 	masqueBrowserCurl    = "curl"
 )
 
+// Quirk: The browser selector is compatibility-only and does not alter the generated TLS fingerprint.
 func normalizeMasqueBrowser(ib, proto string) (string, error) {
 	browser := strings.ToLower(strings.TrimSpace(ib))
 	if browser == "" {
@@ -180,7 +181,8 @@ func (c *cpsBuilder) String() string {
 }
 
 const (
-	dnsOptUDPSize   uint16 = 1232
+	dnsOptUDPSize uint16 = 1232
+	// Protocol: Unknown EDNS options permit opaque data; the Padding option requires zero-filled data.
 	dnsOptCoverCode uint16 = 0xFDE9
 	dnsCoverLen            = 40
 	dnsQTypeHTTPS   uint16 = 0x0041
@@ -220,6 +222,7 @@ func masqueDNSQueryCPS(domain string) (string, error) {
 	ocHi, ocLo := be16(dnsOptCoverCode)
 	olHi, olLo := be16(optLen)
 	opt := []byte{
+		// Protocol: An EDNS OPT record must use the root name.
 		0x00,
 		0x00, 0x29,
 		udpHi, udpLo,

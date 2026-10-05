@@ -72,6 +72,7 @@ func pgUser() string {
 	return u
 }
 
+// Protocol: SIP dialog tokens stay identical in the INVITE and its 100 Trying response, so they are generated once.
 func pgHex(n int) string {
 	const hexDigits = "0123456789abcdef"
 	var b strings.Builder

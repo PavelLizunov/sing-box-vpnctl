@@ -1,3 +1,4 @@
+// Quirk: Concrete type assertions introduce a dependency on types unavailable under independent feature tags.
 package v2rayxhttp
 
 import (

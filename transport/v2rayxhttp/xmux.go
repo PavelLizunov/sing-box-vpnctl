@@ -19,6 +19,7 @@ type xmuxConn interface {
 	roundTripper() http.RoundTripper
 }
 
+// Invariant: Retiring a connection must defer teardown until its last active stream releases it.
 type xmuxClient struct {
 	conn         xmuxConn
 	manager      *xmuxManager
@@ -58,6 +59,7 @@ func (c *xmuxClient) getOpenUsage() int {
 	return c.openUsage
 }
 
+// Invariant: Request limits apply to each HTTP request, not each stream, since one stream can issue multiple uploads.
 func (c *xmuxClient) takeRequest() {
 	atomic.AddInt32(&c.leftRequests, -1)
 }
@@ -98,6 +100,7 @@ func (c *xmuxClient) noteFailure() {
 	}
 }
 
+// Quirk: Successful response headers do not prove stream health because the body can still fail.
 func (c *xmuxClient) noteSuccess() {
 	c.consecFails.Store(0)
 	if c.manager != nil {
@@ -114,6 +117,7 @@ func (c *xmuxClient) roundTrip(request *http.Request) (*http.Response, error) {
 	return response, err
 }
 
+// Invariant: Release must occur exactly once because repeated closes can make usage negative and prevent teardown.
 type xmuxRelease struct {
 	client *xmuxClient
 	once   sync.Once
@@ -240,6 +244,7 @@ func (m *xmuxManager) Close() {
 	}
 }
 
+// Race: The caller must hold m.access while creating a pooled connection.
 func (m *xmuxManager) newClientLocked() *xmuxClient {
 	client := &xmuxClient{
 		conn:      m.newConn(),
@@ -294,6 +299,7 @@ func (m *xmuxManager) getContext(ctx context.Context) (*xmuxClient, error) {
 	}
 }
 
+// Invariant: Every returned client must be paired with exactly one addOpenUsage(-1) call.
 func (m *xmuxManager) get() (*xmuxClient, time.Duration) {
 	m.access.Lock()
 	defer m.access.Unlock()
@@ -353,6 +359,7 @@ var (
 	defaultXmuxHMaxReusableSecs = intRange{1800, 3000}
 )
 
+// Protocol: Defaults apply only to an absent or entirely empty section; any set field leaves other empty ranges unlimited.
 func normalizeXmux(options *option.V2RayXHTTPXmuxOptions) (xmuxConfig, error) {
 	if options == nil || *options == (option.V2RayXHTTPXmuxOptions{}) {
 		return xmuxConfig{

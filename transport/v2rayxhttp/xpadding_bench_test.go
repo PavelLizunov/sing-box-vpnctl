@@ -77,4 +77,3 @@ func BenchmarkApplyXPaddingCookie(b *testing.B) {
 		c.applyXPadding(req)
 	}
 }
-

@@ -14,6 +14,7 @@ func awgIpcLines(o option.AmneziaWGOptions) (string, error) {
 	if !o.IsSet() {
 		return "", nil
 	}
+	// Invariant: Validate raw values before normalization or generation can hide line breaks that inject configuration keys.
 	for _, value := range []string{string(o.H1), string(o.H2), string(o.H3), string(o.H4), o.I1, o.I2, o.I3, o.I4, o.I5, o.Id, o.Ip, o.Ib, o.HeaderProtectionKey, o.ContentPaddingAddition, o.RekeyAfterTime} {
 		if strings.ContainsAny(value, "\r\n") {
 			return "", E.New("amneziawg: string options must not contain CR or LF")
@@ -140,6 +141,7 @@ const (
 	awgMaxJunkSize  = 65507
 )
 
+// Quirk: The full uint32 range wraps the device sampler's width to zero and causes immediate rekeying.
 func validateRekeyAfterTime(value string) error {
 	if value == "" {
 		return nil
@@ -162,6 +164,7 @@ func validateRekeyAfterTime(value string) error {
 	return nil
 }
 
+// Quirk: An inverted junk-size range makes the device's random sampler panic in the retransmit-timer goroutine.
 func validateJunk(o option.AmneziaWGOptions) error {
 	if o.Jc > awgMaxJunkCount {
 		return E.New("amneziawg: jc must be <= ", strconv.Itoa(awgMaxJunkCount))

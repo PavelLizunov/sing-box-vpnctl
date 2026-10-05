@@ -32,6 +32,7 @@ func buildBrowserClientHello(sni, browser string) ([]byte, error) {
 		return nil, E.Cause(err, "amneziawg: uTLS spec for ", browser)
 	}
 
+	// Quirk: QUIC mode rejects browser presets that advertise TLS versions below 1.3.
 	spec.TLSVersMin = utls.VersionTLS13
 	spec.TLSVersMax = utls.VersionTLS13
 	for _, ext := range spec.Extensions {
@@ -53,6 +54,7 @@ func buildBrowserClientHello(sni, browser string) ([]byte, error) {
 	if err := q.ApplyPreset(&spec); err != nil {
 		return nil, E.Cause(err, "amneziawg: uTLS ApplyPreset")
 	}
+	// Protocol: QUIC requires transport parameters in the ClientHello even when no handshake completes.
 	q.SetTransportParameters(quicDecoyTransportParams())
 	if err := q.Start(context.Background()); err != nil {
 		return nil, E.Cause(err, "amneziawg: uTLS QUIC start")
@@ -74,6 +76,7 @@ func buildBrowserClientHello(sni, browser string) ([]byte, error) {
 	return hello, nil
 }
 
+// Invariant: Post-quantum hybrid key shares must be excluded to keep the ClientHello within one QUIC Initial.
 func notPQCurve(c utls.CurveID) bool {
 	return c != utls.X25519MLKEM768 && c != utls.X25519Kyber768Draft00
 }
