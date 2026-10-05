@@ -647,7 +647,11 @@ func (device *Device) determinePacketTypeAndPadding(packet []byte, expectedType 
 		return MessageUnknownType, 0
 	}
 
-	// Fast path: 99.999% of wire traffic is transport data packets
+	var transportMatched bool
+	var transportPadding int
+
+	// Fast path: 99.999% of wire traffic is transport data packets.
+	// An established receiver index disambiguates overlapping wire headers.
 	if expectedType == MessageUnknownType || expectedType == MessageTransportType {
 		padding := device.paddings.transport
 		expectedSize, valid := awgPacketSize(padding, 0, MessageTransportSize)
@@ -655,15 +659,23 @@ func (device *Device) determinePacketTypeAndPadding(packet []byte, expectedType 
 		if valid && size >= expectedSize {
 			data := packet[padding:]
 			val := binary.LittleEndian.Uint32(data)
+			var h [8]byte
 			if len(packet) >= HeaderCipherNonceSize && device.headerProtection.key.Load() != nil {
 				if cip, err := device.HeaderProtectionCipher(packet[:HeaderCipherNonceSize]); err == nil && cip != nil {
-					var h [4]byte
 					cip.XORKeyStream(h[:], h[:])
-					val ^= binary.LittleEndian.Uint32(h[:])
+					val ^= binary.LittleEndian.Uint32(h[:4])
 				}
 			}
 			if device.headers.transport != nil && device.headers.transport.Validate(val) {
-				return MessageTransportType, padding
+				if expectedType == MessageTransportType {
+					return MessageTransportType, padding
+				}
+				receiver := binary.LittleEndian.Uint32(data[4:8]) ^ binary.LittleEndian.Uint32(h[4:8])
+				if device.indexTable.Lookup(receiver).keypair != nil {
+					return MessageTransportType, padding
+				}
+				transportMatched = true
+				transportPadding = padding
 			}
 		}
 		if expectedType == MessageTransportType {
@@ -724,5 +736,8 @@ func (device *Device) determinePacketTypeAndPadding(packet []byte, expectedType 
 		}
 	}
 
+	if transportMatched {
+		return MessageTransportType, transportPadding
+	}
 	return MessageUnknownType, 0
 }
