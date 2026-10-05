@@ -2,21 +2,10 @@ package v2rayxhttp
 
 import "testing"
 
-// The Reality detector matches by runtime type NAME (not by importing the
-// with_utls-only concrete types), so these stand-ins reproduce exactly what the
-// detector sees: types named RealityClientConfig / KTLSClientConfig, and a kTLS
-// wrapper that embeds an inner Config — mirroring common/tls. If common/tls ever
-// renames RealityClientConfig, this test stays green but the live path breaks;
-// that is the documented fragility (SPECS/TASKS/011 PLAN §3.4-A) — keep the names in sync.
-
-// RealityClientConfig is a stand-in whose Name() equals the real one.
 type RealityClientConfig struct{}
 
-// UTLSClientConfig stands in for a non-Reality uTLS config.
 type UTLSClientConfig struct{}
 
-// KTLSClientConfig stands in for the kTLS wrapper: it embeds an inner config via
-// a field named "Config", exactly like common/tls.KTLSClientConfig.
 type KTLSClientConfig struct {
 	Config any
 }

@@ -16,24 +16,14 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// This file verifies the generated QUIC Initial by REVERSE-PARSING our own
-// output — the §5 control vectors of the masquerade spec. The decryptor mirrors
-// the live QUIC sniffer (common/sniff/quic.go): derive Initial keys from the
-// DCID, strip header protection, AEAD-open, walk frames, reassemble CRYPTO. If
-// our generator and the decryptor agree, the crypto is correct (a wrong tag,
-// wrong key, or wrong nonce fails the Open). The assertions check STRUCTURE and
-// the I1–I4 invariants, never "two outputs differ" tautologies.
-
-// decodedInitial is the result of reverse-parsing a generated Initial.
 type decodedInitial struct {
 	dcid         []byte
 	lengthField  uint64
-	frameTypes   []byte           // frame type bytes in wire order
-	cryptoFrames []cryptoFragment // CRYPTO frames in wire order
-	clientHello  []byte           // reassembled, contiguous from offset 0
+	frameTypes   []byte
+	cryptoFrames []cryptoFragment
+	clientHello  []byte
 }
 
-// decryptInitial reverse-parses a QUIC v1 Initial: it mirrors common/sniff/quic.go.
 func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 	t.Helper()
 	reader := bytes.NewReader(packet)
@@ -61,12 +51,10 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 	require.NoError(t, err)
 	require.Equal(t, byte(0), tokenLen, "empty token")
 
-	// length field (varint).
 	lengthField := readVarint(t, reader)
 
 	hdrLen := len(packet) - reader.Len()
 
-	// header protection: sample at hdrLen+4 (4 bytes into the pn field region).
 	_, _, hp := deriveInitialKeys(dcid)
 	block, err := aes.NewCipher(hp)
 	require.NoError(t, err)
@@ -98,7 +86,6 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 	decrypted, err := cipher.Open(nil, nonce, ciphertext, aad)
 	require.NoError(t, err, "AEAD tag must verify — proves crypto is correct (§5.1)")
 
-	// frame-walk.
 	var (
 		frameTypes []byte
 		cryptos    []cryptoFragment
@@ -112,9 +99,9 @@ func decryptInitial(t *testing.T, packet []byte) decodedInitial {
 		require.NoError(t, err)
 		frameTypes = append(frameTypes, ft)
 		switch ft {
-		case 0x00, 0x01: // PADDING, PING
+		case 0x00, 0x01:
 			continue
-		case 0x06: // CRYPTO
+		case 0x06:
 			offset := readVarint(t, fr)
 			length := readVarint(t, fr)
 			idx := len(decrypted) - fr.Len()
@@ -151,8 +138,6 @@ func readVarint(t *testing.T, r io.ByteReader) uint64 {
 	return v
 }
 
-// reassemble merges CRYPTO fragments by offset into a contiguous [0..N) buffer,
-// failing the test on any gap or overlap (I4).
 func reassemble(t *testing.T, frags []cryptoFragment) []byte {
 	t.Helper()
 	var out []byte
@@ -170,7 +155,6 @@ func reassemble(t *testing.T, frags []cryptoFragment) []byte {
 			break
 		}
 	}
-	// ensure no fragment was left unconsumed (gap/overlap detection).
 	var total uint64
 	for _, f := range frags {
 		total += uint64(len(f.data))
@@ -179,23 +163,22 @@ func reassemble(t *testing.T, frags []cryptoFragment) []byte {
 	return out
 }
 
-// extractSNI walks a TLS 1.3 ClientHello and returns the server_name.
 func extractSNI(t *testing.T, ch []byte) string {
 	t.Helper()
 	require.Equal(t, byte(0x01), ch[0], "ClientHello handshake type")
 	chLen := int(ch[1])<<16 | int(ch[2])<<8 | int(ch[3])
 	require.Equal(t, chLen, len(ch)-4, "ClientHello length field matches body")
 	r := bytes.NewReader(ch[4:])
-	skip(t, r, 2)          // legacy_version
-	skip(t, r, 32)         // random
-	sidLen := readU8(t, r) // session_id
+	skip(t, r, 2)
+	skip(t, r, 32)
+	sidLen := readU8(t, r)
 	skip(t, r, int(sidLen))
-	csLen := readU16(t, r) // cipher_suites
+	csLen := readU16(t, r)
 	require.Greater(t, int(csLen), 0, "cipher_suites must be non-empty (§3.1)")
 	skip(t, r, int(csLen))
-	compLen := readU8(t, r) // compression_methods
+	compLen := readU8(t, r)
 	skip(t, r, int(compLen))
-	extTotal := readU16(t, r) // extensions
+	extTotal := readU16(t, r)
 	end := r.Len() - int(extTotal)
 	for r.Len() > end {
 		extType := readU16(t, r)
@@ -203,8 +186,7 @@ func extractSNI(t *testing.T, ch []byte) string {
 		body := make([]byte, extLen)
 		_, err := io.ReadFull(r, body)
 		require.NoError(t, err)
-		if extType == 0x0000 { // server_name
-			// ServerNameList: u16 list_len, name_type(1), u16 host_len, host.
+		if extType == 0x0000 {
 			require.Equal(t, byte(0x00), body[2], "name_type host_name")
 			hostLen := int(body[3])<<8 | int(body[4])
 			return string(body[5 : 5+hostLen])
@@ -234,8 +216,6 @@ func readU16(t *testing.T, r io.Reader) uint16 {
 	return v
 }
 
-// genInitial generates the masquerade Initial and renders it to raw bytes via
-// the same CPS path the device uses (parse the <b> spec, emit bytes).
 func genInitial(t *testing.T, sni string) []byte {
 	t.Helper()
 	spec, err := masqueI1(option.AmneziaWGOptions{Ip: "quic", Id: sni, Ib: "chrome"})
@@ -244,7 +224,6 @@ func genInitial(t *testing.T, sni string) []byte {
 	return pkt
 }
 
-// §5.4 — size: packet ≈1250B, length field 1232.
 func TestQUICInitialSize(t *testing.T) {
 	t.Parallel()
 	pkt := genInitial(t, "www.google.com")
@@ -254,16 +233,13 @@ func TestQUICInitialSize(t *testing.T) {
 	require.Equal(t, uint64(quicInitialLenField), d.lengthField, "length field = 1232 (0x44d0)")
 }
 
-// §5.1 — decrypt: own output AEAD-opens (tag verifies). Proven inside
-// decryptInitial; this test names it explicitly.
 func TestQUICInitialDecrypt(t *testing.T) {
 	t.Parallel()
 	pkt := genInitial(t, "apteka.ru")
-	d := decryptInitial(t, pkt) // require.NoError on Open inside
+	d := decryptInitial(t, pkt)
 	require.NotEmpty(t, d.clientHello)
 }
 
-// §5.2 — frame-walk + invariants I1–I3.
 func TestQUICInitialFrameWalkInvariants(t *testing.T) {
 	t.Parallel()
 	pkt := genInitial(t, "gosuslugi.ru")
@@ -283,10 +259,8 @@ func TestQUICInitialFrameWalkInvariants(t *testing.T) {
 	require.GreaterOrEqual(t, pings, 1, "≥1 PING frame (I3)")
 	require.Greater(t, paddings, 0, "PADDING runs present (I3)")
 
-	// I1: first CRYPTO frame in wire order has offset≠0.
 	require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "first CRYPTO frame offset≠0 (I1)")
 
-	// I2: the offset-0 CRYPTO frame is NOT first.
 	zeroIdx := -1
 	for i, f := range d.cryptoFrames {
 		if f.offset == 0 {
@@ -297,7 +271,6 @@ func TestQUICInitialFrameWalkInvariants(t *testing.T) {
 	require.Greater(t, zeroIdx, 0, "offset-0 CRYPTO frame is not the first one (I2)")
 }
 
-// §5.3 — reassembly + SNI (I4).
 func TestQUICInitialReassemblyAndSNI(t *testing.T) {
 	t.Parallel()
 	for _, sni := range []string{"apteka.ru", "gosuslugi.ru", "www.google.com"} {
@@ -308,8 +281,6 @@ func TestQUICInitialReassemblyAndSNI(t *testing.T) {
 	}
 }
 
-// §5.5 — uniqueness: two calls with the same SNI → different DCID, different TLS
-// random, fully different ciphertext.
 func TestQUICInitialUniqueness(t *testing.T) {
 	t.Parallel()
 	a := genInitial(t, "www.google.com")
@@ -319,21 +290,11 @@ func TestQUICInitialUniqueness(t *testing.T) {
 	da := decryptInitial(t, a)
 	db := decryptInitial(t, b)
 	require.NotEqual(t, da.dcid, db.dcid, "fresh DCID per call")
-	// TLS random sits at clientHello[6:38].
 	require.NotEqual(t, da.clientHello[6:38], db.clientHello[6:38], "fresh TLS random per call")
 }
 
-// Regression: a long but VALID LDH domain (validateMasqueDomain accepts up to
-// 253 bytes) must NOT hard-fail generation. Before the flex-PADDING fix, an SNI
-// past ~77 bytes overflowed the fixed 294-byte ClientHello target and the
-// endpoint failed to start with an opaque error after config was accepted. The
-// flex PADDING run absorbs the slack, so the packet stays exactly 1250 bytes for
-// any supportable SNI, and the longer ClientHello still reassembles to the right
-// SNI (I4).
 func TestQUICInitialLongSNI(t *testing.T) {
 	t.Parallel()
-	// 80-char domain across two ≤63-byte labels — valid LDH, well past the old
-	// ~77-byte ClientHello cliff.
 	longSNI := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.com"
 	require.NoError(t, validateMasqueDomain(longSNI), "test domain must be a valid LDH name")
 
@@ -343,15 +304,9 @@ func TestQUICInitialLongSNI(t *testing.T) {
 	d := decryptInitial(t, pkt)
 	require.Equal(t, uint64(quicInitialLenField), d.lengthField, "length field unchanged")
 	require.Equal(t, longSNI, extractSNI(t, d.clientHello), "long SNI reassembles correctly (I4)")
-	// The ClientHello is now longer than the etalon 294 (the SNI pushed it out).
 	require.Greater(t, len(d.clientHello), quicCHTargetLen, "long SNI grows the ClientHello past the etalon")
 }
 
-// Randomization: the layout is fresh per call (random cut points + wire order),
-// but the I1–I4 invariants must hold on EVERY sample, and two calls must differ
-// in their fragment offsets (no fixed cross-user signature). This guards the
-// randomizedWirePlan / planFragmentsN paths against a bad seed breaking an
-// invariant.
 func TestQUICInitialRandomizedInvariants(t *testing.T) {
 	t.Parallel()
 	const sni = "www.google.com"
@@ -361,9 +316,7 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, quicInitialTotalLen, len(pkt))
 		d := decryptInitial(t, pkt)
-		// I1 + I2
 		require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "I1: first wire CRYPTO offset != 0 (iter %d)", iter)
-		// I3
 		var pings, pads int
 		for _, ft := range d.frameTypes {
 			switch ft {
@@ -375,7 +328,6 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 		}
 		require.GreaterOrEqual(t, pings, 1, "I3 PING (iter %d)", iter)
 		require.Greater(t, pads, 0, "I3 PADDING (iter %d)", iter)
-		// I4
 		require.Equal(t, byte(0x01), d.clientHello[0])
 		require.Equal(t, sni, extractSNI(t, d.clientHello), "I4 SNI (iter %d)", iter)
 
@@ -385,7 +337,6 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 		}
 		firstOffsets = append(firstOffsets, offs)
 	}
-	// Cross-user signature check: not all layouts identical (cut points vary).
 	allSame := true
 	for i := 1; i < len(firstOffsets); i++ {
 		if !equalU64(firstOffsets[0], firstOffsets[i]) {
@@ -396,8 +347,6 @@ func TestQUICInitialRandomizedInvariants(t *testing.T) {
 	require.False(t, allSame, "randomized cut points must differ across calls (no fixed signature)")
 }
 
-// Robustness knobs: more fragments, more PINGs, and a variable datagram size
-// must all still satisfy I1–I4 and stay within the configured size range.
 func TestQUICInitialRobustnessKnobs(t *testing.T) {
 	t.Parallel()
 	const sni = "gosuslugi.ru"
@@ -431,7 +380,6 @@ func equalU64(a, b []uint64) bool {
 	return true
 }
 
-// varint round-trip against the local encoder.
 func TestQUICVarintRoundTrip(t *testing.T) {
 	t.Parallel()
 	for _, v := range []uint64{0, 1, 63, 64, 16383, 16384, 1 << 29, 1 << 30, 1232} {
@@ -441,9 +389,6 @@ func TestQUICVarintRoundTrip(t *testing.T) {
 	}
 }
 
-// guard: the deriveInitialKeys mirror matches the qtls construction used by the
-// sniffer. We re-derive client_secret via the same HKDF path and check the key
-// lengths and determinism (same DCID → same keys).
 func TestQUICInitialKeysDeterministic(t *testing.T) {
 	t.Parallel()
 	dcid := []byte{1, 2, 3, 4, 5, 6, 7, 8}
@@ -455,7 +400,6 @@ func TestQUICInitialKeysDeterministic(t *testing.T) {
 	require.Len(t, k1, 16)
 	require.Len(t, iv1, 12)
 	require.Len(t, hp1, 16)
-	// sanity: derivation path is HKDF-Extract(salt, dcid) → "client in".
 	initialSecret := hkdf.Extract(crypto.SHA256.New, dcid, quicSaltV1)
 	clientSecret := quicHKDFExpandLabel(crypto.SHA256, initialSecret, []byte{}, "client in", crypto.SHA256.Size())
 	require.Equal(t, k1, quicHKDFExpandLabel(crypto.SHA256, clientSecret, []byte{}, "quic key", 16))

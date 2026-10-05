@@ -10,15 +10,6 @@ import (
 	"github.com/sagernet/sing-box/option"
 )
 
-// SPECS/TASKS/059-XHTTP_XMUX
-//
-// The pool decides which HTTP connection carries a stream and when a connection
-// is retired. Nothing it does is visible on the wire, so a mistake here does not
-// surface as a protocol error — it surfaces as a stream that dies mid-flight, or
-// as a connection that outlives the limits the server was told about. These
-// tests pin exactly those behaviours.
-
-// fakeXmuxConn is a poolable connection that records its teardown.
 type fakeXmuxConn struct {
 	access     sync.Mutex
 	closeCount int
@@ -51,8 +42,6 @@ func (c *fakeXmuxConn) kill() {
 	c.dead = true
 }
 
-// poolOf builds a manager whose connections are fakes, returning them in the
-// order they were opened.
 func poolOf(t *testing.T, config xmuxConfig) (*xmuxManager, func() []*fakeXmuxConn) {
 	t.Helper()
 	var (
@@ -73,9 +62,6 @@ func poolOf(t *testing.T, config xmuxConfig) (*xmuxManager, func() []*fakeXmuxCo
 	}
 }
 
-// TestXmuxReusesConnection is the baseline: with concurrency to spare, a second
-// stream must land on the connection the first one already opened. Without this
-// the whole feature is a no-op.
 func TestXmuxReusesConnection(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
 	first, _ := manager.get()
@@ -89,8 +75,6 @@ func TestXmuxReusesConnection(t *testing.T) {
 	}
 }
 
-// TestXmuxConcurrencyLimit: once a connection carries max_concurrency streams,
-// the next stream needs a new connection.
 func TestXmuxConcurrencyLimit(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{1, 1}})
 	first, _ := manager.get()
@@ -104,8 +88,6 @@ func TestXmuxConcurrencyLimit(t *testing.T) {
 	}
 }
 
-// TestXmuxMaxConnections: while the pool is below max_connections every stream
-// opens a new connection; past that it reuses.
 func TestXmuxMaxConnections(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConnections: intRange{2, 2}})
 	manager.get()
@@ -119,9 +101,6 @@ func TestXmuxMaxConnections(t *testing.T) {
 	}
 }
 
-// TestXmuxEviction covers all four retirement causes. Each is checked in
-// isolation: a pool that evicted on the wrong signal would either rotate
-// constantly (churning handshakes) or never (outliving the server's limits).
 func TestXmuxEviction(t *testing.T) {
 	t.Run("closed", func(t *testing.T) {
 		manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
@@ -132,7 +111,6 @@ func TestXmuxEviction(t *testing.T) {
 		}
 	})
 	t.Run("reuse", func(t *testing.T) {
-		// c_max_reuse_times=1 means the connection may be handed out once.
 		manager, _ := poolOf(t, xmuxConfig{
 			maxConcurrency: intRange{4, 4},
 			cMaxReuseTimes: intRange{1, 1},
@@ -168,9 +146,6 @@ func TestXmuxEviction(t *testing.T) {
 	})
 }
 
-// TestXmuxDeferredClose is the one that protects live traffic: retiring a
-// connection that still carries a stream must not tear it down. The teardown is
-// owed to the last stream that leaves.
 func TestXmuxDeferredClose(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
 	client, _ := manager.get()
@@ -187,9 +162,6 @@ func TestXmuxDeferredClose(t *testing.T) {
 	}
 }
 
-// TestXmuxReleaseIsIdempotent: our conns really are closed twice (an expired
-// read deadline plus the caller's Close, SPECS/TASKS/050). A double release
-// would drive openUsage negative and the connection would never be torn down.
 func TestXmuxReleaseIsIdempotent(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
 	client, _ := manager.get()
@@ -203,22 +175,17 @@ func TestXmuxReleaseIsIdempotent(t *testing.T) {
 	if got := client.getOpenUsage(); got != 0 {
 		t.Fatalf("openUsage = %d after repeated release, want 0", got)
 	}
-	// A retired connection must still tear down exactly once.
 	client.close()
 	if got := conns()[0].closes(); got != 1 {
 		t.Fatalf("connection closed %d times, want exactly 1", got)
 	}
 }
 
-// TestXmuxReleaseNilIsSafe: conns built outside a pool (tests, fixed-transport
-// clients) carry a nil release handle.
 func TestXmuxReleaseNilIsSafe(t *testing.T) {
 	var release *xmuxRelease
 	release.release()
 }
 
-// TestXmuxManagerCloseKeepsLiveStreams: shutting the pool down must not cut
-// streams that are still running, for the same reason eviction must not.
 func TestXmuxManagerCloseKeepsLiveStreams(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{maxConcurrency: intRange{4, 4}})
 	client, _ := manager.get()
@@ -234,8 +201,6 @@ func TestXmuxManagerCloseKeepsLiveStreams(t *testing.T) {
 	}
 }
 
-// TestXmuxEventLog: the debug log stands in for pool metrics (SPEC 059 §8.2), so
-// the transitions worth observing must actually be reported.
 func TestXmuxEventLog(t *testing.T) {
 	manager, conns := poolOf(t, xmuxConfig{
 		maxConcurrency: intRange{4, 4},
@@ -266,8 +231,6 @@ func TestXmuxEventLog(t *testing.T) {
 	}
 }
 
-// freezeTime moves the package clock forward so age-based eviction can be tested
-// without sleeping.
 func freezeTime(t *testing.T, at time.Time) func() {
 	t.Helper()
 	previous := timeNow
@@ -275,9 +238,6 @@ func freezeTime(t *testing.T, at time.Time) func() {
 	return func() { timeNow = previous }
 }
 
-// TestNormalizeXmuxDefaults: a config with no xmux section must still get the
-// Xray-compatible defaults — that is what makes a plain config behave like an
-// Xray client (SPEC 059 §3).
 func TestNormalizeXmuxDefaults(t *testing.T) {
 	config, err := normalizeXmux(nil)
 	if err != nil {
@@ -294,7 +254,6 @@ func TestNormalizeXmuxDefaults(t *testing.T) {
 	}
 }
 
-// TestNormalizeXmuxMutuallyExclusive pins the reference's validation rule.
 func TestNormalizeXmuxMutuallyExclusive(t *testing.T) {
 	_, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{
 		MaxConcurrency: "4",
@@ -305,8 +264,6 @@ func TestNormalizeXmuxMutuallyExclusive(t *testing.T) {
 	}
 }
 
-// TestNormalizeXmuxExplicit checks that an explicit section overrides the
-// defaults rather than merging with them.
 func TestNormalizeXmuxExplicit(t *testing.T) {
 	config, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{
 		MaxConcurrency:   "2-8",
@@ -332,11 +289,6 @@ func TestNormalizeXmuxExplicit(t *testing.T) {
 	}
 }
 
-// An entirely empty xmux section selects the same defaults as an absent one,
-// mirroring Xray's all-or-nothing rule (infra/conf/transport_method.go:
-// `if c.Xmux == (XmuxConfig{})` — Xray's Xmux is a value field, so an empty
-// object and a missing one are indistinguishable there). Subscription configs
-// routinely ship the full xmux object with empty strings (issue #14).
 func TestNormalizeXmuxEmptySectionEqualsAbsent(t *testing.T) {
 	config, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{})
 	if err != nil {
@@ -351,11 +303,6 @@ func TestNormalizeXmuxEmptySectionEqualsAbsent(t *testing.T) {
 	}
 }
 
-// A partially-filled section takes its fields as written — unset ranges stay
-// zero (= unlimited), with NO per-field defaults. This is the other half of
-// Xray's all-or-nothing rule: a section with any field set gets no defaults at
-// all, so an Xray client with the same config would not rotate connections
-// where we would.
 func TestNormalizeXmuxPartialSectionGetsNoDefaults(t *testing.T) {
 	config, err := normalizeXmux(&option.V2RayXHTTPXmuxOptions{CMaxReuseTimes: "5"})
 	if err != nil {

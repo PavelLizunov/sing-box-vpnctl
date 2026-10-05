@@ -1,19 +1,5 @@
 //go:build with_awg
 
-// RFC 9001 §5 Initial-encryption primitives for the QUIC masquerade.
-//
-// These are mirrored BYTE-FOR-BYTE from the project's own QUIC TLS helpers in
-// common/sniff/internal/qtls/qtls.go. We cannot import that package directly —
-// it lives under common/sniff/internal/, so Go only permits imports from code
-// rooted at common/sniff/. Rather than relocate upstream's package, we keep a
-// local copy of just the three primitives the generator needs. Because the
-// encoding is identical to qtls (and to RFC 9001), the keys we derive match what
-// the sniffer in common/sniff/quic.go computes for the same DCID — which is what
-// lets that sniffer (and the test reverse-parser) decrypt our output.
-//
-// These are not "custom crypto": HKDF-Expand-Label is RFC 8446 §7.1 verbatim,
-// the salt is the RFC 9001 §5.2 QUIC v1 constant, and the AEAD is AES-128-GCM
-// with the TLS-1.3 XORed-nonce construction (RFC 8446 §5.3 / RFC 9001 §5.3).
 package wireguard
 
 import (
@@ -25,11 +11,8 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-// quicVersion1 is the QUIC v1 version number (RFC 9000 §15).
 const quicVersion1 uint32 = 0x1
 
-// quicSaltV1 is the QUIC v1 Initial salt (RFC 9001 §5.2). Identical to
-// qtls.SaltV1.
 var quicSaltV1 = []byte{
 	0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17,
 	0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a,
@@ -42,8 +25,6 @@ var (
 	hkdfLabelQuicHP   = []byte{0x00, 0x10, 0x0d, 't', 'l', 's', '1', '3', ' ', 'q', 'u', 'i', 'c', ' ', 'h', 'p', 0x00}
 )
 
-// quicHKDFExpandLabel is HKDF-Expand-Label (RFC 8446 §7.1) with the "tls13 "
-// label prefix. Identical to qtls.HKDFExpandLabel.
 func quicHKDFExpandLabel(hash crypto.Hash, secret, context []byte, label string, length int) []byte {
 	var b []byte
 	if len(context) == 0 {
@@ -84,9 +65,6 @@ func quicHKDFExpandLabel(hash crypto.Hash, secret, context []byte, label string,
 	return out
 }
 
-// quicAEADAESGCMTLS13 builds the TLS-1.3 AEAD (AES-128-GCM with a XORed nonce).
-// The 8-byte nonce passed to Seal/Open is XORed onto the low 8 bytes of the
-// 12-byte iv (nonceMask). Identical to qtls.AEADAESGCMTLS13.
 func quicAEADAESGCMTLS13(key, nonceMask []byte) cipher.AEAD {
 	if len(nonceMask) != 12 {
 		panic("tls: internal error: wrong nonce length")
@@ -109,7 +87,7 @@ type quicXorNonceAEAD struct {
 	aead      cipher.AEAD
 }
 
-func (f *quicXorNonceAEAD) NonceSize() int { return 8 } // 64-bit sequence number
+func (f *quicXorNonceAEAD) NonceSize() int { return 8 }
 func (f *quicXorNonceAEAD) Overhead() int  { return f.aead.Overhead() }
 
 func (f *quicXorNonceAEAD) Seal(out, nonce, plaintext, additionalData []byte) []byte {

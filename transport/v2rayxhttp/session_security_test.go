@@ -26,8 +26,6 @@ func TestSessionAlphabetUniqueEntropy(t *testing.T) {
 	}
 }
 
-// This regression checks the security source requirement, not statistical
-// properties that cannot distinguish a CSPRNG from a pseudorandom generator.
 func TestSessionRandomSource(t *testing.T) {
 	file, err := parser.ParseFile(token.NewFileSet(), "client.go", nil, 0)
 	if err != nil {

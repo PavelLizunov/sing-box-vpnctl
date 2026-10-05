@@ -12,9 +12,6 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
-// clientWith builds a Client from option-like metaOptions, normalized for the given
-// mode, with padding disabled unless padRange is set. It mirrors what NewClient
-// produces minus the transport/TLS wiring (not needed for request-shaping tests).
 func clientWith(t *testing.T, mode string, padRange intRange, opts metaOptions) *Client {
 	t.Helper()
 	meta, err := normalizeMeta(opts, mode)
@@ -41,10 +38,6 @@ func mustRequest(t *testing.T, c *Client, method, sessionID, seqStr string) *htt
 	return req
 }
 
-// --- default (zero-regression) -------------------------------------------------
-
-// TestDefaultLegacyPadding locks the v1 on-wire shape: padding lives in the Referer
-// header as an x_padding query param, path carries session/seq, no obfs headers.
 func TestDefaultLegacyPadding(t *testing.T) {
 	c := clientWith(t, modePacketUp, intRange{100, 100}, metaOptions{})
 	req := mustRequest(t, c, "POST", "sid", "3")
@@ -59,19 +52,14 @@ func TestDefaultLegacyPadding(t *testing.T) {
 	if !strings.Contains(referer, "x_padding=") {
 		t.Fatalf("Referer %q has no x_padding query", referer)
 	}
-	// padding value must be 100 '0' bytes — the legacy non-obfs filler, kept
-	// byte-identical to the live-verified v1 default.
 	want := "x_padding=" + strings.Repeat("0", 100)
 	if !strings.Contains(referer, want) {
 		t.Fatalf("Referer %q missing %q", referer, want)
 	}
-	// no obfs placement headers should be present.
 	if req.Header.Get("X-Padding") != "" {
 		t.Fatal("unexpected X-Padding header in non-obfs mode")
 	}
 }
-
-// --- session / seq placement ---------------------------------------------------
 
 func TestSessionPlacement(t *testing.T) {
 	t.Run("query", func(t *testing.T) {
@@ -108,7 +96,6 @@ func TestSeqPlacement(t *testing.T) {
 		if got := req.Header.Get("X-Seq"); got != "42" {
 			t.Fatalf("header X-Seq = %q, want 42", got)
 		}
-		// session stays on path (default), seq moved to header.
 		if req.URL.Path != "/xhttp/sid" {
 			t.Fatalf("path = %q, want /xhttp/sid", req.URL.Path)
 		}
@@ -122,10 +109,8 @@ func TestSeqPlacement(t *testing.T) {
 	})
 }
 
-// --- uplink data placement -----------------------------------------------------
-
 func TestUplinkDataBody(t *testing.T) {
-	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{}) // default body/auto
+	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{})
 	req := mustRequest(t, c, "POST", "sid", "0")
 	payload := []byte("hello world")
 	c.applyUplinkData(req, payload)
@@ -142,13 +127,12 @@ func TestUplinkDataBody(t *testing.T) {
 func TestUplinkDataHeaderChunks(t *testing.T) {
 	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{
 		UplinkDataPlacement: "header",
-		UplinkChunkSize:     "64-64", // small chunks to force multiple headers
+		UplinkChunkSize:     "64-64",
 	})
 	req := mustRequest(t, c, "POST", "sid", "0")
-	payload := []byte(strings.Repeat("payload-data ", 30)) // ~390 bytes
+	payload := []byte(strings.Repeat("payload-data ", 30))
 	c.applyUplinkData(req, payload)
 
-	// reassemble from X-Data-0, X-Data-1, ... until a gap, mirroring the server.
 	var encoded strings.Builder
 	for i := 0; ; i++ {
 		v := req.Header.Get("X-Data-" + itoa(i))
@@ -198,8 +182,6 @@ func TestUplinkDataCookieChunks(t *testing.T) {
 		t.Fatalf("reassembled cookie payload mismatch")
 	}
 }
-
-// --- X-Padding obfs placements -------------------------------------------------
 
 func TestXPaddingObfsPlacements(t *testing.T) {
 	const padLen = 120
@@ -256,13 +238,9 @@ func TestXPaddingCustomKeyHeader(t *testing.T) {
 	}
 }
 
-// --- tokenish padding ----------------------------------------------------------
-
 func TestTokenishPaddingHuffmanLength(t *testing.T) {
 	for _, target := range []int{64, 100, 256, 1000} {
 		pad := generateTokenishPaddingBase62(target)
-		// base62-only content (no literal run of identical chars is required, but
-		// every byte must be in the alphabet).
 		for _, r := range pad {
 			if !strings.ContainsRune(base62Alphabet, r) {
 				t.Fatalf("tokenish padding contains non-base62 byte %q", r)
@@ -295,8 +273,6 @@ func TestTokenishUsedWhenConfigured(t *testing.T) {
 	}
 }
 
-// --- validation / mode gates ---------------------------------------------------
-
 func TestValidationRejections(t *testing.T) {
 	cases := []struct {
 		name string
@@ -325,7 +301,6 @@ func TestValidationRejections(t *testing.T) {
 }
 
 func TestValidationAccepts(t *testing.T) {
-	// header/cookie uplink and GET method ARE valid in packet-up.
 	if _, err := normalizeMeta(metaOptions{UplinkDataPlacement: "header"}, modePacketUp); err != nil {
 		t.Fatalf("uplink header in packet-up should be valid: %v", err)
 	}
@@ -334,9 +309,6 @@ func TestValidationAccepts(t *testing.T) {
 	}
 }
 
-// GET is only valid in packet-up, but rather than fail the whole config over one
-// subscription node that ships method=GET on a non-packet-up node, normalizeMeta
-// falls back to POST (and warns) so the rest of the config still loads. lx: SPEC 002.
 func TestUplinkGetFallsBackToPostOutsidePacketUp(t *testing.T) {
 	for _, mode := range []string{modeAuto, modeStreamUp, modeStreamOne} {
 		m, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "GET"}, mode)
@@ -347,7 +319,6 @@ func TestUplinkGetFallsBackToPostOutsidePacketUp(t *testing.T) {
 			t.Fatalf("mode %s: expected fallback to POST, got %q", mode, m.uplinkHTTPMethod)
 		}
 	}
-	// In packet-up GET is honoured (no fallback).
 	m, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "GET"}, modePacketUp)
 	if err != nil {
 		t.Fatalf("GET in packet-up should be valid: %v", err)
@@ -356,8 +327,6 @@ func TestUplinkGetFallsBackToPostOutsidePacketUp(t *testing.T) {
 		t.Fatalf("GET in packet-up should be kept, got %q", m.uplinkHTTPMethod)
 	}
 }
-
-// --- uplink method on the wire -------------------------------------------------
 
 func TestUplinkMethodUpperCased(t *testing.T) {
 	m, err := normalizeMeta(metaOptions{UplinkHTTPMethod: "put"}, modePacketUp)
@@ -369,8 +338,6 @@ func TestUplinkMethodUpperCased(t *testing.T) {
 	}
 }
 
-// --- chunk size defaults -------------------------------------------------------
-
 func TestUplinkChunkSizeDefaults(t *testing.T) {
 	cookie, _ := normalizeMeta(metaOptions{UplinkDataPlacement: "cookie"}, modePacketUp)
 	if cookie.uplinkChunkSize != (intRange{2048, 3072}) {
@@ -380,19 +347,12 @@ func TestUplinkChunkSizeDefaults(t *testing.T) {
 	if header.uplinkChunkSize != (intRange{3000, 4000}) {
 		t.Fatalf("header chunk default = %v, want {3000 4000}", header.uplinkChunkSize)
 	}
-	// floor of 64.
 	floored, _ := normalizeMeta(metaOptions{UplinkDataPlacement: "header", UplinkChunkSize: "10-20"}, modePacketUp)
 	if floored.uplinkChunkSize.min != 64 {
 		t.Fatalf("chunk floor not applied: %v", floored.uplinkChunkSize)
 	}
 }
 
-// --- streamed-body gRPC content type ------------------------------------------
-
-// Xray's FillStreamRequest sets "Content-Type: application/grpc" on requests that
-// carry a body (stream-one, stream-up). Reverse proxies in front of an XHTTP
-// server key unbuffered response streaming on it — without it a stream-one dial
-// hangs until timeout (live-verified 2026-08-01).
 func TestGRPCHeaderOnStreamedBody(t *testing.T) {
 	const grpcContentType = "application/grpc"
 
@@ -404,7 +364,6 @@ func TestGRPCHeaderOnStreamedBody(t *testing.T) {
 		return request
 	}
 
-	// Body present, opt-out off → header set.
 	client := &Client{}
 	request := newReq(strings.NewReader("payload"))
 	client.applyGRPCHeader(request)
@@ -412,7 +371,6 @@ func TestGRPCHeaderOnStreamedBody(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want %q", got, grpcContentType)
 	}
 
-	// no_grpc_header → nothing set (Xray's NoGRPCHeader).
 	optedOut := &Client{noGRPCHeader: true}
 	request = newReq(strings.NewReader("payload"))
 	optedOut.applyGRPCHeader(request)
@@ -420,7 +378,6 @@ func TestGRPCHeaderOnStreamedBody(t *testing.T) {
 		t.Fatalf("no_grpc_header: Content-Type = %q, want empty", got)
 	}
 
-	// Bodyless request (packet-up download GET) → nothing set.
 	request, err := http.NewRequest(http.MethodGet, "https://example.com/feed", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
@@ -431,7 +388,6 @@ func TestGRPCHeaderOnStreamedBody(t *testing.T) {
 	}
 }
 
-// itoa is a tiny local helper to avoid importing strconv in the test for one use.
 func itoa(i int) string {
 	if i == 0 {
 		return "0"
@@ -445,8 +401,6 @@ func itoa(i int) string {
 	}
 	return string(b[pos:])
 }
-
-// --- session id generation -----------------------------------------------------
 
 func TestSessionIDDefaultIsUUID(t *testing.T) {
 	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{})
@@ -492,7 +446,6 @@ func TestSessionIDTableAndLength(t *testing.T) {
 		}
 	})
 	t.Run("table name resolves case-sensitively", func(t *testing.T) {
-		// "HEX" is the UPPERCASE alphabet, "hex" the lowercase one.
 		c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "HEX", SessionLength: "32"})
 		id := c.newSessionID()
 		if strings.Trim(id, "0123456789ABCDEF") != "" {
@@ -501,8 +454,6 @@ func TestSessionIDTableAndLength(t *testing.T) {
 	})
 }
 
-// A configured session id must ride the same placement engine as the default one:
-// the generator changes the id's shape, not where it is carried.
 func TestSessionIDTableOnPath(t *testing.T) {
 	c := clientWith(t, modePacketUp, intRange{0, 0}, metaOptions{SessionTable: "hex", SessionLength: "16"})
 	id := c.newSessionID()

@@ -58,8 +58,6 @@ func TestAwgIpcLinesUnsetHeadersOmitted(t *testing.T) {
 	require.Equal(t, "\njc=4\nh2=10-20", lines)
 }
 
-// A plain WireGuard endpoint must produce byte-identical device config to
-// upstream even in a with_awg build.
 func TestAwgIpcLinesPlainWireGuard(t *testing.T) {
 	t.Parallel()
 	lines, err := awgIpcLines(option.AmneziaWGOptions{})
@@ -67,8 +65,6 @@ func TestAwgIpcLinesPlainWireGuard(t *testing.T) {
 	require.Equal(t, "", lines)
 }
 
-// Options built in code (libbox/launcher) bypass JSON validation; the ipc
-// layer must reject garbage with the key name instead of feeding it to uapi.
 func TestAwgIpcLinesInvalidHeader(t *testing.T) {
 	t.Parallel()
 	_, err := awgIpcLines(option.AmneziaWGOptions{H3: "100-50"})
@@ -76,9 +72,6 @@ func TestAwgIpcLinesInvalidHeader(t *testing.T) {
 	require.ErrorContains(t, err, "h3")
 }
 
-// jmin > jmax makes amneziawg-go's rand.Int argument <= 0, which panics in the
-// retransmit-timer goroutine. awgIpcLines must reject it at config time instead
-// — and must not panic doing so.
 func TestAwgIpcLinesJminGreaterThanJmax(t *testing.T) {
 	t.Parallel()
 	require.NotPanics(t, func() {
@@ -89,20 +82,14 @@ func TestAwgIpcLinesJminGreaterThanJmax(t *testing.T) {
 	})
 }
 
-// A valid junk range (jmin <= jmax, the shape every real awg2 export uses) and
-// a fully-disabled junk config must both pass.
 func TestAwgIpcLinesValidJunkRange(t *testing.T) {
 	t.Parallel()
 	_, err := awgIpcLines(option.AmneziaWGOptions{Jc: 4, Jmin: 40, Jmax: 70})
 	require.NoError(t, err)
-	_, err = awgIpcLines(option.AmneziaWGOptions{H1: "1"}) // junk off, only a header
+	_, err = awgIpcLines(option.AmneziaWGOptions{H1: "1"})
 	require.NoError(t, err)
 }
 
-// ip=quic is a SINGLE Initial: i1 only, i2 empty. One Initial is what a real
-// client sends to open one QUIC session; the realism is in the browser-accurate
-// ClientHello (Ib), not in packet count. The i1 must be a valid fragmented
-// Initial carrying the SNI.
 func TestAwgIpcLinesQUICSingleInitial(t *testing.T) {
 	t.Parallel()
 	const sni = "www.google.com"
@@ -120,8 +107,6 @@ func TestAwgIpcLinesQUICSingleInitial(t *testing.T) {
 	require.NotEqual(t, uint64(0), d.cryptoFrames[0].offset, "first CRYPTO offset != 0 (I1)")
 }
 
-// dns/stun/quic are single-packet: they fill i1 only, leaving i2 empty. (sip is
-// multi-packet — INVITE + 100 Trying — covered by its own test below.)
 func TestAwgIpcLinesNonSIPNoI2(t *testing.T) {
 	t.Parallel()
 	for _, o := range []option.AmneziaWGOptions{
@@ -136,9 +121,6 @@ func TestAwgIpcLinesNonSIPNoI2(t *testing.T) {
 	}
 }
 
-// ip=sip is multi-packet: i1 = a complete INVITE, i2 = the matching 100 Trying.
-// Both must be whole valid SIP messages wired into the device, and they must
-// share one dialog (Via branch / tag / Call-ID / CSeq) — the cross-slot check.
 func TestAwgIpcLinesSIPFillsI1AndI2(t *testing.T) {
 	t.Parallel()
 	const host = "pbx.example.com"
@@ -157,9 +139,6 @@ func TestAwgIpcLinesSIPFillsI1AndI2(t *testing.T) {
 	assertSameSIPDialog(t, invite, trying)
 }
 
-// ip=sip is the only multi-packet sugar profile, so an explicit i2 alongside it
-// is a conflict (the sugar fills i2), mirroring the i1 conflict guard. quic/dns/
-// stun are single-packet and leave i2 free, so a user i2 there is not a conflict.
 func TestAwgIpcLinesSIPExplicitI2Conflict(t *testing.T) {
 	t.Parallel()
 	_, err := awgIpcLines(option.AmneziaWGOptions{Id: "a.com", Ip: "sip", I2: "<b 0x0844>"})
@@ -191,14 +170,12 @@ func TestAwg31IpcLines(t *testing.T) {
 
 func TestAwg31HeaderProtectionValidation(t *testing.T) {
 	t.Parallel()
-	// Invalid key length
 	_, err := awgIpcLines(option.AmneziaWGOptions{
 		HeaderProtectionKey: "abcd",
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "header_protection_key must be a valid 64-character hex string")
 
-	// S1..S4 < 12
 	_, err = awgIpcLines(option.AmneziaWGOptions{
 		S1:                  10,
 		HeaderProtectionKey: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -207,8 +184,6 @@ func TestAwg31HeaderProtectionValidation(t *testing.T) {
 	require.Contains(t, err.Error(), "s1..s4 must each be >= 12 bytes")
 }
 
-// ipcValue extracts the value of a "\nkey=value" line from awgIpcLines output,
-// or "" if absent.
 func ipcValue(t *testing.T, lines, key string) string {
 	t.Helper()
 	for _, line := range strings.Split(lines, "\n") {

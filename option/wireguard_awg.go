@@ -8,21 +8,8 @@ import (
 	"github.com/sagernet/sing/common/json"
 )
 
-// MagicHeader is one AmneziaWG magic-header parameter (H1..H4): either a
-// single uint32 or an inclusive "min-max" range (AWG 2.0 export format, e.g.
-// "43613244-384550127"). It holds the canonical spec string understood by the
-// device layer (newMagicHeader in the vendored wireguard-go): "N" for a single
-// value, "N-M" for a range, "" for unset.
-//
-// The underlying type is string so AmneziaWGOptions stays comparable (IsSet
-// relies on o != AmneziaWGOptions{}) and the zero value means "not set", as
-// the zero uint32 did before.
 type MagicHeader string
 
-// UnmarshalJSON accepts a JSON number (backward compatible with the previous
-// uint32 field: "h1": 1234567890) or a JSON string "N" / "N-M". The single
-// value 0 (and "", "0") normalizes to unset, preserving the previous
-// zero-value semantics.
 func (h *MagicHeader) UnmarshalJSON(data []byte) error {
 	var spec string
 	if len(data) > 0 && data[0] == '"' {
@@ -46,8 +33,6 @@ func (h *MagicHeader) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// MarshalJSON keeps type fidelity with the previous uint32 field: a single
-// value marshals back to a JSON number, only a range becomes a JSON string.
 func (h MagicHeader) MarshalJSON() ([]byte, error) {
 	normalized, err := normalizeMagicHeader(string(h))
 	if err != nil {
@@ -62,18 +47,11 @@ func (h MagicHeader) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(normalized))
 }
 
-// Spec re-validates the header and returns the canonical IpcSet value (""
-// when unset). The device layer calls it so options constructed in code
-// (libbox/launcher, bypassing JSON) are still checked before IpcSet.
 func (h MagicHeader) Spec() (string, error) {
 	normalized, err := normalizeMagicHeader(string(h))
 	return string(normalized), err
 }
 
-// normalizeMagicHeader validates spec as "N" or "N-M" (both uint32, N ≤ M)
-// and returns the canonical form: "" for unset/zero, "N" for a single value
-// (including "N-N"), "N-M" for a range — mirroring magic-header.go in the
-// vendored wireguard-go.
 func normalizeMagicHeader(spec string) (MagicHeader, error) {
 	if strings.ContainsAny(spec, "\r\n") {
 		return "", E.New("magic header must not contain CR or LF")
@@ -109,33 +87,6 @@ func normalizeMagicHeader(spec string) (MagicHeader, error) {
 	return MagicHeader(strconv.FormatUint(start, 10) + "-" + strconv.FormatUint(end, 10)), nil
 }
 
-// AmneziaWGOptions carries the AmneziaWG (AWG) obfuscation parameters that
-// extend a plain WireGuard endpoint into an AmneziaWG 2.0 client.
-//
-// It is a downstream (sing-box-lx) addition; upstream sing-box has no AWG
-// support. The struct is always present in the option model so that configs
-// parse identically with and without the `with_awg` build tag — the tag only
-// gates whether these values are actually applied to the device (see
-// transport/wireguard/device_awg.go vs device_stub_awg.go). Without the tag a
-// config that sets any AWG field is rejected with an explicit
-// "awg support not built" error rather than silently downgrading to plain
-// WireGuard (which would defeat the obfuscation).
-//
-// Field semantics (AmneziaWG wire format, see the amneziawg-go IpcSet keys):
-//   - Jc/Jmin/Jmax: junk packet count and min/max sizes sent before the
-//     handshake.
-//   - S1/S2: extra junk prepended to the init / response handshake messages.
-//   - H1..H4: magic header values overriding the four WireGuard message types;
-//     each is a single uint32 or an inclusive "min-max" range (AWG 2.0).
-//   - I1..I5: AmneziaWG 2.0 "controlled packet sequence" (CPS) packets. These
-//     are case-sensitive strings (UPPERCASE keywords like <b 0x...>, <c>, <t>,
-//     <r N>) and the order matters; I1 is typically a real protocol snapshot
-//     (e.g. a QUIC Initial). They map 1:1 to the amneziawg-go i1..i5 keys.
-//   - Id/Ip/Ib: WireSock-style declarative masquerade sugar over I1. Instead of
-//     hand-writing an I1 CPS string, the user names a masquerade domain (Id),
-//     protocol (Ip: quic|dns|stun|sip) and browser (Ib), and the device layer
-//     (transport/wireguard/masque_awg.go) generates the I1 CPS string for them.
-//     They are mutually exclusive with an explicit I1. See SPECS/TASKS/009-*.
 type AmneziaWGOptions struct {
 	Jc   uint32      `json:"jc,omitempty"`
 	Jmin uint32      `json:"jmin,omitempty"`
@@ -153,22 +104,17 @@ type AmneziaWGOptions struct {
 	I3   string      `json:"i3,omitempty"`
 	I4   string      `json:"i4,omitempty"`
 	I5   string      `json:"i5,omitempty"`
-	Id   string      `json:"id,omitempty"` // masquerade domain; required for ip=quic/dns/sip, optional for stun
-	Ip   string      `json:"ip,omitempty"` // masquerade protocol: quic | dns | stun | sip
-	Ib   string      `json:"ib,omitempty"` // masquerade browser: chrome | firefox | curl (limited effect, see masque_awg.go)
+	Id   string      `json:"id,omitempty"`
+	Ip   string      `json:"ip,omitempty"`
+	Ib   string      `json:"ib,omitempty"`
 
-	// AmneziaWG 3.1 parameters
 	RandomTrailers         *bool  `json:"random_trailers,omitempty"`
 	DisableCookie          *bool  `json:"disable_cookies,omitempty"`
 	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
 	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
-	// RekeyAfterTime is a seconds value or inclusive range; zero uses the 120s default.
-	RekeyAfterTime string `json:"rekey_after_time,omitempty"`
+	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
 }
 
-// IsSet reports whether any AmneziaWG obfuscation parameter has been
-// configured. It is used by the device builder/stub to decide whether AWG
-// handling is required for this endpoint.
 func (o AmneziaWGOptions) IsSet() bool {
 	return o != AmneziaWGOptions{}
 }

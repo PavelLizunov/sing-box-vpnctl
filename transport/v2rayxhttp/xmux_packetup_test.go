@@ -12,15 +12,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 )
 
-// SPECS/TASKS/059-XHTTP_XMUX §4
-//
-// h_max_request_times counts HTTP REQUESTS, not streams. packet-up issues one
-// upload POST per Write, so a single long-lived stream can exhaust the limit on
-// its own. Counting streams instead would leave the connection alive far past
-// what the server was told, which is exactly the compatibility gap the task
-// exists to close.
-
-// countingTransport answers every request with 200 and counts them.
 type countingTransport struct {
 	requests atomic.Int32
 }
@@ -31,9 +22,6 @@ func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, er
 		io.Copy(io.Discard, request.Body)
 		request.Body.Close()
 	}
-	// Only the download GET holds its body open, like a real server. Upload POST
-	// responses must end: sendPacket drains them inline, so a blocking body there
-	// would wedge every Write.
 	if request.Method == http.MethodGet {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -46,7 +34,6 @@ func (t *countingTransport) RoundTrip(request *http.Request) (*http.Response, er
 	}, nil
 }
 
-// blockingReader stands in for a download stream that stays open.
 type blockingReader struct {
 	release chan struct{}
 }
@@ -78,7 +65,6 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 		meta:       meta,
 		xmux:       singleTransportXmux(transport),
 	}
-	// Four requests allowed: the download GET plus three upload POSTs.
 	client.xmux.config.hMaxRequestTimes = intRange{4, 4}
 
 	xmuxClient, _ := client.xmux.get()
@@ -95,8 +81,6 @@ func TestPacketUpUploadsCountAgainstRequestLimit(t *testing.T) {
 		}
 	}
 
-	// The download RoundTrip runs in its own goroutine; wait for it to land so the
-	// count is stable.
 	deadline := time.Now().Add(2 * time.Second)
 	for transport.requests.Load() < 4 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
