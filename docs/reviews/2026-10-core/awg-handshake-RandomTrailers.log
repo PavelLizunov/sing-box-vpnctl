@@ -1,8 +1,0 @@
-=== RUN   TestReviewAWGRandomTrailers
-=== PAUSE TestReviewAWGRandomTrailers
-=== CONT  TestReviewAWGRandomTrailers
-    endpoint_resolver_test.go:253: timed out waiting for endpoint to converge on  127.0.0.1:33572
---- FAIL: TestReviewAWGRandomTrailers (2.01s)
-FAIL
-FAIL	github.com/sagernet/wireguard-go/device	2.017s
-FAIL
