@@ -162,20 +162,6 @@ func (c *cpsBuilder) addRand(n int) {
 	c.parts = append(c.parts, fmt.Sprintf("<r %d>", n))
 }
 
-func (c *cpsBuilder) addRandChars(n int) {
-	if n <= 0 {
-		return
-	}
-	c.parts = append(c.parts, fmt.Sprintf("<rc %d>", n))
-}
-
-func (c *cpsBuilder) addRandDigits(n int) {
-	if n <= 0 {
-		return
-	}
-	c.parts = append(c.parts, fmt.Sprintf("<rd %d>", n))
-}
-
 func (c *cpsBuilder) String() string {
 	return strings.Join(c.parts, "")
 }

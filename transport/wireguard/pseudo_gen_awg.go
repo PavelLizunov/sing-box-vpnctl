@@ -96,67 +96,9 @@ func pgDigits(n int) string {
 	return b.String()
 }
 
-func pgIsReservedIP(a, b int) bool {
-	switch {
-	case a == 0 || a == 10 || a == 127:
-		return true
-	case a == 172 && b >= 16 && b <= 31:
-		return true
-	case a == 192 && b == 168:
-		return true
-	case a == 169 && b == 254:
-		return true
-	case a == 100 && b >= 64 && b <= 127:
-		return true
-	case a >= 224:
-		return true
-	}
-	return false
-}
-
-func pgPublicIP() string {
-	for {
-		a := 1 + pgIntn(223)
-		b := pgIntn(256)
-		if pgIsReservedIP(a, b) {
-			continue
-		}
-		c := pgIntn(256)
-		d := 1 + pgIntn(254)
-		return itoa(a) + "." + itoa(b) + "." + itoa(c) + "." + itoa(d)
-	}
-}
-
-func pgHost() string {
-	switch r := pgIntn(100); {
-	case r < 30:
-		return pgWord() + "." + pgWord() + "." + pgPick(pgTLD)
-	case r < 60:
-		return pgPublicIP()
-	case r < 90:
-		return pgWord() + "." + pgPick(pgTLD)
-	default:
-		return "sip." + pgWord() + "." + pgPick(pgTLD)
-	}
-}
-
 func pgDomainHost() string {
 	if pgIntn(100) < 60 {
 		return pgWord() + "." + pgWord() + "." + pgPick(pgTLD)
 	}
 	return pgWord() + "." + pgPick(pgTLD)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [3]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[i:])
 }
