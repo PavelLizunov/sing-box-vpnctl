@@ -111,7 +111,11 @@ func (c *xmuxClient) noteSuccess() {
 func (c *xmuxClient) roundTrip(request *http.Request) (*http.Response, error) {
 	c.takeRequest()
 	response, err := c.conn.roundTripper().RoundTrip(request)
-	if err != nil || response.StatusCode != http.StatusOK {
+	if err != nil {
+		if request.Context().Err() == nil {
+			c.noteFailure()
+		}
+	} else if response.StatusCode != http.StatusOK {
 		c.noteFailure()
 	}
 	return response, err
