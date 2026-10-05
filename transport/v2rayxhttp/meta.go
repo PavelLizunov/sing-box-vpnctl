@@ -85,6 +85,13 @@ func normalizeMeta(opts metaOptions, mode string) (metaConfig, error) {
 	}
 	m.seqKey = resolveKey(opts.SeqKey, m.seqPlacement, "X-Seq", "x_seq")
 
+	if m.sessionPlacement == placementPath {
+		for _, char := range opts.SessionTable {
+			if strings.ContainsRune("/?#%", char) || unicode.IsSpace(char) {
+				return m, E.New("v2ray-xhttp: session_table contains an invalid character for session_placement=path: ", strconv.QuoteRune(char))
+			}
+		}
+	}
 	if m.sessionTable, m.sessionLength, err = resolveSessionID(opts.SessionTable, opts.SessionLength); err != nil {
 		return m, err
 	}
@@ -423,11 +430,11 @@ func setQuery(u *url.URL, key, value string) {
 		u.RawQuery = url.QueryEscape(key) + "=" + url.QueryEscape(value)
 		return
 	}
-	if !strings.Contains(u.RawQuery, key+"=") {
+	q := u.Query()
+	if _, exists := q[key]; !exists {
 		u.RawQuery += "&" + url.QueryEscape(key) + "=" + url.QueryEscape(value)
 		return
 	}
-	q := u.Query()
 	q.Set(key, value)
 	u.RawQuery = q.Encode()
 }

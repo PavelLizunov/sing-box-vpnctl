@@ -172,14 +172,16 @@ func (c *Client) dialPacketUp(ctx context.Context, sessionID string, xmuxClient 
 }
 
 type writeDeadline struct {
-	access sync.Mutex
-	reader *io.PipeReader
-	timer  *time.Timer
+	access     sync.Mutex
+	reader     *io.PipeReader
+	timer      *time.Timer
+	generation uint64
 }
 
 func (d *writeDeadline) set(t time.Time) error {
 	d.access.Lock()
 	defer d.access.Unlock()
+	d.generation++
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
@@ -190,16 +192,27 @@ func (d *writeDeadline) set(t time.Time) error {
 	if delay := time.Until(t); delay <= 0 {
 		d.reader.CloseWithError(os.ErrDeadlineExceeded)
 	} else {
+		generation := d.generation
 		d.timer = time.AfterFunc(delay, func() {
-			d.reader.CloseWithError(os.ErrDeadlineExceeded)
+			d.expire(generation)
 		})
 	}
 	return nil
 }
 
+func (d *writeDeadline) expire(generation uint64) {
+	d.access.Lock()
+	defer d.access.Unlock()
+	if generation != d.generation || d.reader == nil {
+		return
+	}
+	d.reader.CloseWithError(os.ErrDeadlineExceeded)
+}
+
 func (d *writeDeadline) stop() {
 	d.access.Lock()
 	defer d.access.Unlock()
+	d.generation++
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
@@ -207,11 +220,12 @@ func (d *writeDeadline) stop() {
 }
 
 type readDeadline struct {
-	access   sync.Mutex
-	dead     chan struct{}
-	expired  bool
-	timer    *time.Timer
-	onExpire func()
+	access     sync.Mutex
+	dead       chan struct{}
+	expired    bool
+	timer      *time.Timer
+	generation uint64
+	onExpire   func()
 }
 
 func newReadDeadline(onExpire func()) *readDeadline {
@@ -220,6 +234,7 @@ func newReadDeadline(onExpire func()) *readDeadline {
 
 func (d *readDeadline) set(t time.Time) error {
 	d.access.Lock()
+	d.generation++
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
@@ -232,7 +247,10 @@ func (d *readDeadline) set(t time.Time) error {
 	if delay := time.Until(t); delay <= 0 {
 		fire = d.expireLocked()
 	} else {
-		d.timer = time.AfterFunc(delay, d.expire)
+		generation := d.generation
+		d.timer = time.AfterFunc(delay, func() {
+			d.expire(generation)
+		})
 	}
 	d.access.Unlock()
 	// Race: The expiry callback runs outside the deadline lock because closing the response body can block.
@@ -242,8 +260,12 @@ func (d *readDeadline) set(t time.Time) error {
 	return nil
 }
 
-func (d *readDeadline) expire() {
+func (d *readDeadline) expire(generation uint64) {
 	d.access.Lock()
+	if generation != d.generation {
+		d.access.Unlock()
+		return
+	}
 	fire := d.expireLocked()
 	d.access.Unlock()
 	if fire {
@@ -260,6 +282,15 @@ func (d *readDeadline) expireLocked() bool {
 	return d.onExpire != nil
 }
 
+func (d *readDeadline) isExpired() bool {
+	select {
+	case <-d.dead:
+		return true
+	default:
+		return false
+	}
+}
+
 func (d *readDeadline) runOnExpire() {
 	if d.onExpire != nil {
 		d.onExpire()
@@ -269,6 +300,7 @@ func (d *readDeadline) runOnExpire() {
 func (d *readDeadline) stop() {
 	d.access.Lock()
 	defer d.access.Unlock()
+	d.generation++
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
@@ -333,6 +365,9 @@ func (c *streamConn) setupReader(reader io.ReadCloser, err error) {
 	c.reader = reader
 	c.readerErr = err
 	close(c.created)
+	if reader != nil && c.readDeadline.isExpired() {
+		reader.Close()
+	}
 }
 
 // Invariant: Failed dials must cancel the request and release the pooled connection because callers may never close them.
@@ -350,12 +385,22 @@ func (c *streamConn) Read(b []byte) (int, error) {
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
-		return 0, os.ErrDeadlineExceeded
+		select {
+		case <-c.created:
+		default:
+			return 0, os.ErrDeadlineExceeded
+		}
 	}
 	if c.readerErr != nil {
 		return 0, c.readerErr
 	}
+	if c.readDeadline.isExpired() {
+		return 0, os.ErrDeadlineExceeded
+	}
 	n, err := c.reader.Read(b)
+	if err != nil && c.readDeadline.isExpired() {
+		return n, os.ErrDeadlineExceeded
+	}
 	c.breaker.noteRead(err)
 	return n, err
 }
@@ -448,6 +493,9 @@ func (c *splitConn) setupReader(reader io.ReadCloser, err error) {
 	c.ready = true
 	close(c.created)
 	c.stateMu.Unlock()
+	if reader != nil && c.readDeadline.isExpired() {
+		reader.Close()
+	}
 }
 
 func (c *splitConn) fail(err error) {
@@ -565,6 +613,8 @@ type packetConn struct {
 	reader       io.ReadCloser
 	created      chan struct{}
 	readerErr    error
+	ready        bool
+	terminalErr  error
 	serverAddr   M.Socksaddr
 	access       sync.Mutex
 	seq          uint64
@@ -587,29 +637,62 @@ func newPacketConn(ctx context.Context, client *Client, sessionID string, server
 	}
 	conn.readDeadline = newReadDeadline(func() {
 		conn.breaker.localClosed.Store(true)
-		select {
-		case <-conn.created:
-			if conn.reader != nil {
-				conn.reader.Close()
-			}
-		default:
+		conn.access.Lock()
+		reader := conn.reader
+		conn.access.Unlock()
+		if reader != nil {
+			reader.Close()
 		}
 	})
 	return conn
 }
 
 func (c *packetConn) setupReader(reader io.ReadCloser, err error) {
+	c.access.Lock()
+	if c.ready || c.terminalErr != nil || c.closed {
+		c.access.Unlock()
+		if reader != nil {
+			reader.Close()
+		}
+		return
+	}
 	c.reader = reader
 	c.readerErr = err
+	c.ready = true
 	close(c.created)
+	c.access.Unlock()
+	if reader != nil && c.readDeadline.isExpired() {
+		reader.Close()
+	}
 }
 
-func (c *packetConn) fail(err error) {
-	c.setupReader(nil, err)
+func (c *packetConn) fail(err error) error {
+	c.access.Lock()
+	if c.terminalErr != nil {
+		err = c.terminalErr
+		c.access.Unlock()
+		return err
+	}
+	if c.closed {
+		c.access.Unlock()
+		return net.ErrClosed
+	}
+	c.terminalErr = err
+	reader := c.reader
+	if !c.ready {
+		c.ready = true
+		close(c.created)
+	}
+	c.access.Unlock()
+	c.readDeadline.stop()
 	if c.cancel != nil {
 		c.cancel()
 	}
+	if reader != nil {
+		reader.Close()
+	}
 	c.xmux.release()
+	return err
 }
 
 func (c *packetConn) Read(b []byte) (int, error) {
@@ -617,17 +700,45 @@ func (c *packetConn) Read(b []byte) (int, error) {
 	select {
 	case <-c.created:
 	case <-c.readDeadline.dead:
+		select {
+		case <-c.created:
+		default:
+			return 0, os.ErrDeadlineExceeded
+		}
+	}
+	c.access.Lock()
+	reader, err := c.reader, c.readerErr
+	if c.terminalErr != nil {
+		err = c.terminalErr
+	}
+	c.access.Unlock()
+	if err != nil {
+		return 0, err
+	}
+	if c.readDeadline.isExpired() {
 		return 0, os.ErrDeadlineExceeded
 	}
-	if c.readerErr != nil {
-		return 0, c.readerErr
+	n, err := reader.Read(b)
+	c.access.Lock()
+	terminalErr := c.terminalErr
+	c.access.Unlock()
+	if terminalErr != nil {
+		return n, terminalErr
 	}
-	n, err := c.reader.Read(b)
+	if err != nil && c.readDeadline.isExpired() {
+		return n, os.ErrDeadlineExceeded
+	}
 	c.breaker.noteRead(err)
 	return n, err
 }
 
 func (c *packetConn) Write(b []byte) (int, error) {
+	c.access.Lock()
+	err := c.terminalErr
+	c.access.Unlock()
+	if err != nil {
+		return 0, err
+	}
 	maxEach := c.client.meta.scMaxEachPostBytes.rand()
 	if maxEach <= 0 {
 		maxEach = len(b)
@@ -648,6 +759,11 @@ func (c *packetConn) Write(b []byte) (int, error) {
 
 func (c *packetConn) sendPacket(b []byte) error {
 	c.access.Lock()
+	if c.terminalErr != nil {
+		err := c.terminalErr
+		c.access.Unlock()
+		return err
+	}
 	if c.closed {
 		c.access.Unlock()
 		return net.ErrClosed
@@ -680,11 +796,11 @@ func (c *packetConn) sendPacket(b []byte) error {
 
 	response, err := c.xmux.roundTrip(request)
 	if err != nil {
-		return err
+		return c.fail(err)
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
-		return E.New("v2ray-xhttp: unexpected upload status: ", response.Status)
+		return c.fail(E.New("v2ray-xhttp: unexpected upload status: ", response.Status))
 	}
 	drainAndClose(response.Body)
 	c.xmux.noteSuccess()
@@ -708,19 +824,23 @@ func (c *packetConn) nextPostDelay() time.Duration {
 }
 
 func (c *packetConn) Close() error {
-	c.access.Lock()
-	c.closed = true
-	c.access.Unlock()
 	var err error
 	c.closeOnce.Do(func() {
 		c.breaker.localClosed.Store(true)
+		c.access.Lock()
+		c.closed = true
+		if c.terminalErr == nil {
+			c.terminalErr = net.ErrClosed
+		}
+		reader := c.reader
+		if !c.ready {
+			c.ready = true
+			close(c.created)
+		}
+		c.access.Unlock()
 		c.readDeadline.stop()
-		select {
-		case <-c.created:
-			if c.reader != nil {
-				err = c.reader.Close()
-			}
-		default:
+		if reader != nil {
+			err = reader.Close()
 		}
 		if c.cancel != nil {
 			c.cancel()
