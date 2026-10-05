@@ -16,6 +16,8 @@
 .github/workflows/verify.yml
 ARCHITECTURE.md
 README.md
+README.ru.md
+docs/vpnctl/*
 include/v2rayxhttp.go
 option/v2ray_xhttp*.go
 option/wireguard_awg*.go
