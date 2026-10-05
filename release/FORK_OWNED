@@ -40,7 +40,10 @@ submodules/wireguard-go/*
 cmd/internal/build_libbox/main.go +1 -1
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
-go.mod +3 -0
+# go.mod and go.sum also carry grpc and x/crypto newer than upstream pins, to close
+# published vulnerabilities; drop that part when upstream catches up.
+go.mod +11 -9
+go.sum +28 -30
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
 protocol/wireguard/endpoint.go +1 -0
