@@ -211,7 +211,10 @@ func (s *StdNetBind) sendMsgX(conn *net.UDPConn, msgs []ipv6.Message) error {
 	}
 	for i := range msgs {
 		buffer := msgs[i].Buffers[0]
-		state.iovs[i] = unix.Iovec{Base: &buffer[0]}
+		state.iovs[i] = unix.Iovec{}
+		if len(buffer) != 0 {
+			state.iovs[i].Base = &buffer[0]
+		}
 		state.iovs[i].SetLen(len(buffer))
 		state.hdrs[i] = msghdrX{}
 		state.hdrs[i].Msg.Name = name
