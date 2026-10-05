@@ -22,6 +22,7 @@ option/wireguard_awg*.go
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
 release/fork_boundary_test.py
+release/hygiene/*
 release/security_workflow_test.py
 release/v1.14.0-vpnctl.5.md
 transport/v2ray/registry.go
