@@ -32,25 +32,27 @@ type Timer struct {
 	modifyingLock sync.RWMutex
 	runningLock   sync.Mutex
 	isPending     bool
+	deadline      time.Time
 }
 
 func (peer *Peer) NewTimer(expirationFunction func(*Peer)) *Timer {
 	timer := &Timer{}
 	timer.Timer = time.AfterFunc(time.Hour, func() {
+		if pauseManager := peer.device.pauseManager; pauseManager != nil {
+			pauseManager.WaitActive()
+		}
+
 		timer.runningLock.Lock()
 		defer timer.runningLock.Unlock()
 
 		timer.modifyingLock.Lock()
-		if !timer.isPending {
+		if !timer.isPending || time.Now().Before(timer.deadline) {
 			timer.modifyingLock.Unlock()
 			return
 		}
 		timer.isPending = false
 		timer.modifyingLock.Unlock()
 
-		if pauseManager := peer.device.pauseManager; pauseManager != nil {
-			pauseManager.WaitActive()
-		}
 		expirationFunction(peer)
 	})
 	timer.Stop()
@@ -60,6 +62,7 @@ func (peer *Peer) NewTimer(expirationFunction func(*Peer)) *Timer {
 func (timer *Timer) Mod(d time.Duration) {
 	timer.modifyingLock.Lock()
 	timer.isPending = true
+	timer.deadline = time.Now().Add(d)
 	timer.Reset(d)
 	timer.modifyingLock.Unlock()
 }
@@ -82,6 +85,11 @@ func (timer *Timer) IsPending() bool {
 	timer.modifyingLock.RLock()
 	defer timer.modifyingLock.RUnlock()
 	return timer.isPending
+}
+
+func sinceIncludingSleep(t time.Time) time.Duration {
+	now := time.Now()
+	return max(now.Sub(t), now.Round(0).Sub(t))
 }
 
 func (peer *Peer) timersActive() bool {
