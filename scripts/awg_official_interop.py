@@ -9,8 +9,10 @@ Example (root, no PID namespace; binaries must already exist locally):
 The caller must attest BUILD_SHA256 was built from official v3.1.20260828,
 commit b5928efb6ca19f0153958460c3d141f04abc5c2e. The official --version embeds
 an older string and is NOT a source-revision attestation. No build/download is
-performed. Requires installed Python cryptography and iproute2. Both binary
-arguments are trusted executable code. JSONL output is allowlisted; no daemon
+performed. Requires installed Python cryptography and iproute2. The fresh
+namespace gets a dead-end dummy default interface so the engine's offline
+monitor does not pause WireGuard; --offline-control omits it and must fail.
+Both binary arguments are trusted executable code. JSONL output is allowlisted; no daemon
 logs, UAPI replies, configuration, keys, paths or exception text are emitted.
 
 Each role tests actual TCP HTTP POST request/response bytes and UDP echo bytes.
@@ -117,7 +119,7 @@ def net_inode():
 
 
 class Network:
-    def __init__(self, acknowledged):
+    def __init__(self, acknowledged, offline=False):
         if not acknowledged or os.geteuid() != 0 or net_inode() == os.stat("/proc/1/ns/net").st_ino:
             raise Failure("namespace_guard")
         self.inode = net_inode()
@@ -132,6 +134,13 @@ class Network:
             if any(route.get("dev") != "lo" or route.get("dst") == "default" for route in routes):
                 raise Failure("namespace_not_fresh")
         self.change("link", "set", "lo", "up")
+        if not offline:
+            # A fresh loopback-only namespace is offline to sing-box's network
+            # monitor. Provide a dead-end default interface, never a host link.
+            self.change("link", "add", "awg-uplink", "type", "dummy")
+            self.change("address", "add", "192.0.2.1/32", "dev", "awg-uplink")
+            self.change("link", "set", "awg-uplink", "up")
+            self.change("route", "add", "default", "dev", "awg-uplink")
 
     def guard(self):
         if net_inode() != self.inode or net_inode() == os.stat("/proc/1/ns/net").st_ino:
@@ -398,7 +407,9 @@ def scenario(args, network, case, role, key_material, wrong=False):
         peer = dict(public_key=base64.b64encode(native_public).decode(), allowed_ips=[native_address + "/32"])
         if native_server:
             peer.update(address="127.0.0.1", port=native_port)
-        config = {"log": {"disabled": True}, "inbounds": [dict(type="mixed", tag="health",
+        log_path = Path(directory) / "sing-errors.log"
+        log_path.touch(mode=0o600, exist_ok=False)
+        config = {"log": {"level": "error", "output": str(log_path)}, "inbounds": [dict(type="mixed", tag="health",
                   listen="127.0.0.1", listen_port=health_port)], "endpoints": [dict(type="wireguard",
                   tag="awg", system=False, address=[sing_address + "/32"], mtu=1280,
                   private_key=base64.b64encode(sing_private).decode(), listen_port=sing_port,
@@ -440,9 +451,12 @@ def scenario(args, network, case, role, key_material, wrong=False):
         udp = udp_probe(probe_address, probe_udp, args.timeout)
         alive(processes)
         handshake = handshake_seen(socket_path)
-        passed = (http == "timeout" and udp == "timeout" and not handshake) if wrong else (
-                  http == "ok" and udp == "ok" and handshake)
-        return {"pass": passed, "http": http, "udp": udp, "native_handshake": handshake, "alive": True}
+        # Only a fixed boolean crosses the reporting boundary; never daemon text.
+        offline = b"missing default interface" in log_path.read_bytes()
+        passed = not offline and ((http == "timeout" and udp == "timeout" and not handshake) if wrong else (
+                  http == "ok" and udp == "ok" and handshake))
+        return {"pass": passed, "http": http, "udp": udp, "native_handshake": handshake,
+                "alive": True, "missing_default_interface": offline}
 
 
 def main():
@@ -454,12 +468,15 @@ def main():
     parser.add_argument("--case", choices=CASES)
     parser.add_argument("--role", choices=ROLES)
     parser.add_argument("--timeout", type=float, default=12)
+    parser.add_argument("--offline-control", action="store_true",
+                        help="omit dummy default route; requires awg2/official_server and is expected to fail")
     args = parser.parse_args()
-    if not 3 <= args.timeout <= 30:
+    if not 3 <= args.timeout <= 30 or (args.offline_control and
+            (args.case != "awg2" or args.role != "official_server")):
         raise Failure("arguments")
     os.umask(0o077)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    network = Network(args.isolated_netns)
+    network = Network(args.isolated_netns, args.offline_control)
     args.sing_box = args.sing_box.resolve(strict=True)
     args.official = args.official.resolve(strict=True)
     for binary in (args.sing_box, args.official):

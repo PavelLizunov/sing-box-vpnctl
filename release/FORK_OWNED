@@ -28,6 +28,7 @@ release/hygiene/*
 release/security_workflow_test.py
 release/v*-vpnctl.*.md
 scripts/awg_official_interop.py
+scripts/awg_official_interop_test.py
 scripts/awg_runtime_probe.py
 transport/v2ray/registry.go
 transport/v2rayxhttp/*
