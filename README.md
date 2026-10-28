@@ -70,7 +70,7 @@ It goes into the `endpoints` list. Without the AmneziaWG options the endpoint is
 ## Limits
 
 - XHTTP is a client only and speaks HTTP/2 only: h2 with TLS, h2c without. No HTTP/1.1, no HTTP/3, no separate download settings.
-- AmneziaWG is tested between two instances of this engine: handshake and data, every extension alone and all together, on Linux, macOS and Windows. It is not tested here against the official AmneziaWG implementation or on an Android device.
+- AmneziaWG tests cover handshake and data between two instances of this engine, with extensions alone and together, on Linux, macOS and Windows. The on-demand Verify workflow also checks synthetic TCP/UDP traffic against a pinned official AmneziaWG peer in an isolated Linux network namespace. This does not cover native `.conf` import or a real Android device.
 - A read deadline that expires on an XHTTP connection ends that connection; it cannot be extended afterwards.
 
 ## How it tracks upstream

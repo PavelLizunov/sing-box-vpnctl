@@ -12,7 +12,7 @@ The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile 
 
 ## Building from source
 
-Go 1.26 or newer.
+Go 1.26.10 or newer. The fork's CI, verification and release workflows pin 1.26.10 so a cached older 1.26 toolchain cannot reintroduce GO-2026-6809.
 
 ```bash
 git clone \
@@ -51,4 +51,6 @@ The attestation ties the file to the release workflow run. Compare the source co
 
 ## What is checked before a release
 
-See the Checks section of [ARCHITECTURE.md](../../ARCHITECTURE.md). Not covered by automation: a real Android device, and interoperability with other AmneziaWG and Xray implementations.
+See the Checks section of [ARCHITECTURE.md](../../ARCHITECTURE.md). Verify includes synthetic TCP/UDP interop with official AmneziaWG `v3.1.20260828` in an isolated Linux namespace. This is not a native `.conf` import test. Real Android devices, physical suspend/resume and production reverse-proxy paths still need separate testing. Xray interoperability is a candidate acceptance check, not part of the checked-in Verify matrix.
+
+A build with `CGO_ENABLED=0` and the release `with_purego` tag can still require the platform's dynamic loader and native libraries; do not assume it is a fully static executable.

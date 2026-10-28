@@ -11,6 +11,14 @@ class ReleaseSecurityTests(unittest.TestCase):
         for action in re.findall(r"uses:\s+([^\s]+)", WORKFLOW.read_text()):
             self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$")
 
+    def test_fork_workflows_pin_patched_go(self):
+        for name in ("ci.yml", "verify.yml", "release.yml"):
+            versions = re.findall(r"go-version:\s*['\"]?([\d.x]+)", (WORKFLOW.parent / name).read_text())
+            self.assertTrue(versions, name)
+            for version in versions:
+                self.assertRegex(version, r"^\d+\.\d+\.\d+$", name)
+                self.assertGreaterEqual(tuple(map(int, version.split("."))), (1, 26, 10), name)
+
     def test_no_clobber_or_forced_tag(self):
         text = WORKFLOW.read_text()
         self.assertNotIn("--clobber", text)
