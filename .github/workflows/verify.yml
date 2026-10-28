@@ -27,6 +27,12 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify fork boundary
+        run: |
+          python3 -B release/fork_boundary_test.py
+          python3 -B release/security_workflow_test.py
 
       - name: Setup Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
@@ -51,6 +57,28 @@ jobs:
 
       - name: Vet fork packages
         run: go vet -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp ./option ./transport/wireguard ./transport/v2rayxhttp ./transport/v2ray ./protocol/wireguard
+
+      - name: Build candidate and pinned official AWG peer
+        run: |
+          TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
+          go build -trimpath -tags "$TAGS" -ldflags '-s -w -checklinkname=0' -o "$RUNNER_TEMP/sing-box-interop" ./cmd/sing-box
+          git init "$RUNNER_TEMP/official-awg"
+          git -C "$RUNNER_TEMP/official-awg" fetch --depth=1 https://github.com/amnezia-vpn/amneziawg-go.git b5928efb6ca19f0153958460c3d141f04abc5c2e
+          git -C "$RUNNER_TEMP/official-awg" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/official-awg" rev-parse HEAD)" = b5928efb6ca19f0153958460c3d141f04abc5c2e
+          go -C "$RUNNER_TEMP/official-awg" build -trimpath -o "$RUNNER_TEMP/awg31-reference" .
+          git -C "$RUNNER_TEMP/official-awg" diff --exit-code
+          sha256sum "$RUNNER_TEMP/sing-box-interop" "$RUNNER_TEMP/awg31-reference"
+
+      - name: Test official AWG interoperability in an isolated network namespace
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-cryptography iproute2
+          sudo modprobe tun
+          sudo unshare --net --mount --propagation private -- /usr/bin/python3 -B scripts/awg_official_interop.py \
+            --isolated-netns --sing-box "$RUNNER_TEMP/sing-box-interop" \
+            --official "$RUNNER_TEMP/awg31-reference" \
+            --official-sha256 "$(sha256sum "$RUNNER_TEMP/awg31-reference" | cut -d ' ' -f1)"
 
   embedded:
     name: Embedded WireGuard on ${{ matrix.os }}

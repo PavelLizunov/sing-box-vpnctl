@@ -55,3 +55,15 @@ git ls-tree -r --name-only 4a5352eb470c92aa8569ceeac4b8d674dfcc980e docs/reviews
 git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:docs/reviews/2026-10-core/core-review.md
 git show 4a5352eb470c92aa8569ceeac4b8d674dfcc980e:ROADMAP.md
 ```
+
+The later AWG validation notes and security/release reports are preserved at
+`2977c52fbd7a166fe0766bfced97c786cdb4b03a`:
+
+```bash
+git show 2977c52fbd7a166fe0766bfced97c786cdb4b03a:.dsh/security-review-report.md
+git show 2977c52fbd7a166fe0766bfced97c786cdb4b03a:SPECS/awg31-validation-status.md
+git show 2977c52fbd7a166fe0766bfced97c786cdb4b03a:release/vpnctl5-final-verification.md
+```
+
+The reusable AWG probes remain in `scripts/` and are listed individually in
+`release/FORK_OWNED`. Historical results do not replace testing a new candidate.
