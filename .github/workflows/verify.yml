@@ -94,7 +94,7 @@ jobs:
           assert row['alive'] and row['missing_default_interface'] and not row['native_handshake']
           assert not row['pass'] and row['http'] == row['udp'] == 'timeout'
           assert rows[-1] == {'kind': 'summary', 'pass': False, 'cases': 1}
-          print('Offline namespace control: expected pause confirmed; not an AWG protocol failure')
+          print('Offline namespace control: expected pause confirmed; interoperability still requires the following matrix')
           PY
           sudo unshare --net --mount --propagation private -- /usr/bin/python3 -B scripts/awg_official_interop.py \
             --isolated-netns --sing-box "$RUNNER_TEMP/sing-box-interop" \
