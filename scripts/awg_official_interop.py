@@ -135,8 +135,6 @@ class Network:
                 raise Failure("namespace_not_fresh")
         self.change("link", "set", "lo", "up")
         if not offline:
-            # A fresh loopback-only namespace is offline to sing-box's network
-            # monitor. Provide a dead-end default interface, never a host link.
             self.change("link", "add", "awg-uplink", "type", "dummy")
             self.change("address", "add", "192.0.2.1/32", "dev", "awg-uplink")
             self.change("link", "set", "awg-uplink", "up")
@@ -451,7 +449,6 @@ def scenario(args, network, case, role, key_material, wrong=False):
         udp = udp_probe(probe_address, probe_udp, args.timeout)
         alive(processes)
         handshake = handshake_seen(socket_path)
-        # Only a fixed boolean crosses the reporting boundary; never daemon text.
         offline = b"missing default interface" in log_path.read_bytes()
         passed = not offline and ((http == "timeout" and udp == "timeout" and not handshake) if wrong else (
                   http == "ok" and udp == "ok" and handshake))
