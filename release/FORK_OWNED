@@ -18,9 +18,12 @@ ARCHITECTURE.md
 README.md
 README.ru.md
 docs/vpnctl/*
+include/dnstt.go
 include/v2rayxhttp.go
+option/dnstt.go
 option/v2ray_xhttp*.go
 option/wireguard_awg*.go
+protocol/dnstt/*
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
 release/fork_boundary_test.py
@@ -45,8 +48,9 @@ constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
 # Module pins carry grpc and the x/net v0.62.0 dependency set ahead of upstream
 # to close published vulnerabilities; drop that part when upstream catches up.
-go.mod +47 -45
-go.sum +102 -102
+go.mod +55 -45
+go.sum +123 -102
+include/registry.go +1 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
 protocol/wireguard/endpoint.go +1 -0

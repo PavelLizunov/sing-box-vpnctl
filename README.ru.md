@@ -84,6 +84,7 @@
 - [Параметры AmneziaWG](docs/vpnctl/awg.md)
 - [Параметры XHTTP](docs/vpnctl/xhttp.md)
 - [Рецепты DNS](docs/vpnctl/dns.md)
+- [SSH через DNSTT](docs/vpnctl/dnstt.md)
 - [Сборки, выпуски и проверка скачанного](docs/vpnctl/build.md)
 - [Архитектура](ARCHITECTURE.md)
 
