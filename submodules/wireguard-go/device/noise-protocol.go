@@ -530,7 +530,7 @@ func (device *Device) createMessageResponse(peer *Peer, msgType uint32) (*Messag
 	return &msg, nil
 }
 
-func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
+func (device *Device) ConsumeMessageResponse(msg *MessageResponse) (peer *Peer) {
 	if msg.Type != MessageResponseType {
 		return nil
 	}
@@ -544,8 +544,9 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 	}
 
 	var (
-		hash     [blake2s.Size]byte
-		chainKey [blake2s.Size]byte
+		hash           [blake2s.Size]byte
+		chainKey       [blake2s.Size]byte
+		localEphemeral NoisePrivateKey
 	)
 
 	// Snapshot the static private key before acquiring handshake.mutex so
@@ -606,6 +607,11 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 			return false
 		}
 		mixHash(&hash, &hash, msg.Empty[:])
+
+		// The state may change between the read lock above and the write
+		// lock below; remember which ephemeral key this response belongs to.
+		copy(localEphemeral[:], handshake.localEphemeral[:])
+
 		return true
 	}()
 
@@ -617,17 +623,21 @@ func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
 
 	handshake.mutex.Lock()
 
-	handshake.hash = hash
-	handshake.chainKey = chainKey
-	handshake.remoteIndex = msg.Sender
-	handshake.state = handshakeResponseConsumed
+	if handshake.state == handshakeInitiationCreated && handshake.localEphemeral.Equals(localEphemeral) {
+		handshake.hash = hash
+		handshake.chainKey = chainKey
+		handshake.remoteIndex = msg.Sender
+		handshake.state = handshakeResponseConsumed
+		peer = lookup.peer
+	}
 
 	handshake.mutex.Unlock()
 
 	setZero(hash[:])
 	setZero(chainKey[:])
+	setZero(localEphemeral[:])
 
-	return lookup.peer
+	return
 }
 
 /* Derives a new keypair from the current handshake state
