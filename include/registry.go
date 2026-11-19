@@ -97,6 +97,7 @@ func OutboundRegistry() *outbound.Registry {
 	registerNaiveOutbound(registry)
 	tor.RegisterOutbound(registry)
 	ssh.RegisterOutbound(registry)
+	registerVPNCTLOutbounds(registry)
 	shadowtls.RegisterOutbound(registry)
 	vless.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)

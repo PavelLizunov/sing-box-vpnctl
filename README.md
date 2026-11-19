@@ -82,6 +82,7 @@ The fork changes only its own layer. Every file outside the list in `release/FOR
 - [AmneziaWG options](docs/vpnctl/awg.md)
 - [XHTTP options](docs/vpnctl/xhttp.md)
 - [DNS recipes](docs/vpnctl/dns.md)
+- [SSH over DNSTT](docs/vpnctl/dnstt.md)
 - [Builds, releases and verifying a download](docs/vpnctl/build.md)
 - [Architecture](ARCHITECTURE.md)
 
