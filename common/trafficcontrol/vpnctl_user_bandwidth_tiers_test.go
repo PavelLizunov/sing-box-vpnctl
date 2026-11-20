@@ -74,8 +74,6 @@ func TestVPNCTLUserBandwidthAppliesPerUserTiers(t *testing.T) {
 		t.Fatal("a user without an override must not share an overridden user's limiter")
 	}
 
-	// The endpoint tag happens to match an override key, but an endpoint is not
-	// an authenticated user: an unmapped peer on it still uses the default.
 	endpointNamedUser := bandwidth.limiter(adapter.InboundContext{InboundType: "vless", User: "awg3-in"})
 	requireTierTestRate(t, endpointNamedUser, tierTestEndpointBitsPerSecond)
 	unmappedPeer := bandwidth.limiter(adapter.InboundContext{
