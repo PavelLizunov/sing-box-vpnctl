@@ -38,6 +38,14 @@ func NewUserBandwidth(options option.VPNCTLUserBandwidthOptions) (*UserBandwidth
 	if options.BitsPerSecond < 8 {
 		return nil, fmt.Errorf("vpnctl_user_bandwidth.bits_per_second must be at least 8")
 	}
+	for user, bitsPerSecond := range options.UserBitsPerSecond {
+		if user == "" {
+			return nil, fmt.Errorf("vpnctl_user_bandwidth has an invalid user bandwidth mapping")
+		}
+		if bitsPerSecond < 8 {
+			return nil, fmt.Errorf("vpnctl_user_bandwidth.user_bits_per_second must be at least 8")
+		}
+	}
 	for tag, peers := range options.WireGuardPeers {
 		for address, user := range peers {
 			if tag == "" || !address.IsValid() || address.Is4In6() || user == "" {
@@ -61,7 +69,13 @@ func (b *UserBandwidth) limiter(metadata adapter.InboundContext) *rate.Limiter {
 	if existing, ok := b.users.Load(identity); ok {
 		return existing.(*rate.Limiter)
 	}
-	next := rate.NewLimiter(rate.Limit(b.options.BitsPerSecond)/8, userBandwidthBurst)
+	bitsPerSecond := b.options.BitsPerSecond
+	if identity.user != "" {
+		if override, loaded := b.options.UserBitsPerSecond[identity.user]; loaded {
+			bitsPerSecond = override
+		}
+	}
+	next := rate.NewLimiter(rate.Limit(bitsPerSecond)/8, userBandwidthBurst)
 	existing, _ := b.users.LoadOrStore(identity, next)
 	return existing.(*rate.Limiter)
 }

@@ -6,6 +6,12 @@ Matching user names share a budget across connections and protocols, with one
 64 KiB burst allowance. Set `bits_per_second` to 40000000 for 40 Mbit/s.
 This budget is shared between upload and download.
 
+Use the optional `user_bits_per_second` map to replace the default rate for
+specific authenticated user names. For example, `{"alice": 80000000}` gives
+Alice 80 Mbit/s across her proxy connections and mapped tunnel addresses.
+Unmapped tunnel peers keep the default endpoint budget. Every configured rate
+must be at least eight bits per second.
+
 For userspace WireGuard and AmneziaWG endpoints that send TCP and UDP through
 the router, supply `wireguard_peers` as endpoint tag → assigned tunnel address
 → authenticated user name. Only exact peer addresses are supported. Map each
