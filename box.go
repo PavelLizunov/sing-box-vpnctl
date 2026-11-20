@@ -240,6 +240,13 @@ func New(options Options) (*Box, error) {
 	if err != nil {
 		return nil, E.Cause(err, "initialize router")
 	}
+	if rateOptions := routeOptions.VPNCTLUserBandwidth; rateOptions != nil {
+		limiter, err := trafficcontrol.NewUserBandwidth(*rateOptions)
+		if err != nil {
+			return nil, err
+		}
+		router.AppendTracker(limiter)
+	}
 	if needClashAPI || needAPIService || options.PlatformLogWriter != nil {
 		trafficManager := trafficcontrol.NewManager()
 		service.MustRegisterPtr(ctx, trafficManager)

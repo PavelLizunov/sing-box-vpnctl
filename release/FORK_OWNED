@@ -15,6 +15,7 @@
 .github/workflows/release.yml
 .github/workflows/verify.yml
 ARCHITECTURE.md
+common/trafficcontrol/vpnctl_user_bandwidth*.go
 README.md
 README.ru.md
 docs/vpnctl/*
@@ -22,6 +23,8 @@ include/dnstt.go
 include/v2rayxhttp.go
 option/dnstt.go
 option/v2ray_xhttp*.go
+option/vpnctl_user_bandwidth.go
+option/vpnctl_user_bandwidth_test.go
 option/wireguard_awg*.go
 protocol/dnstt/*
 release/FORK_OWNED
@@ -42,6 +45,8 @@ transport/wireguard/masque_cps_test.go
 submodules/wireguard-go/*
 
 [hooks]
+box.go +7 -0
+option/route.go +1 -0
 .gitignore +4 -0
 cmd/internal/build_libbox/main.go +1 -1
 constant/v2ray.go +1 -0

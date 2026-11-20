@@ -3,6 +3,7 @@ package option
 import "github.com/sagernet/sing/common/json/badoption"
 
 type RouteOptions struct {
+	VPNCTLUserBandwidth        *VPNCTLUserBandwidthOptions       `json:"vpnctl_user_bandwidth,omitempty"`
 	GeoIP                      *GeoIPOptions                     `json:"geoip,omitempty" schema:"omit"`
 	Geosite                    *GeositeOptions                   `json:"geosite,omitempty" schema:"omit"`
 	Rules                      []Rule                            `json:"rules,omitempty"`
