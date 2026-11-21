@@ -25,6 +25,7 @@ type InboundTLSOptions struct {
 	ClientCertificate                badoption.Listable[string]          `json:"client_certificate,omitempty"`
 	ClientCertificatePath            badoption.Listable[string]          `json:"client_certificate_path,omitempty"`
 	ClientCertificatePublicKeySHA256 badoption.Listable[[]byte]          `json:"client_certificate_public_key_sha256,omitempty"`
+	ClientSPIFFEID                   badoption.Listable[string]          `json:"client_spiffe_id,omitempty"`
 	Key                              badoption.Listable[string]          `json:"key,omitempty"`
 	KeyPath                          string                              `json:"key_path,omitempty"`
 	KernelTx                         bool                                `json:"kernel_tx,omitempty"`
@@ -122,6 +123,7 @@ type OutboundTLSOptions struct {
 	ClientCertificatePath      string                              `json:"client_certificate_path,omitempty"`
 	ClientKey                  badoption.Listable[string]          `json:"client_key,omitempty"`
 	ClientKeyPath              string                              `json:"client_key_path,omitempty"`
+	ClientSPIFFE               *TLSClientSPIFFEOptions             `json:"client_spiffe,omitempty"`
 	Fragment                   bool                                `json:"fragment,omitempty"`
 	FragmentFallbackDelay      badoption.Duration                  `json:"fragment_fallback_delay,omitempty"`
 	RecordFragment             bool                                `json:"record_fragment,omitempty"`
@@ -133,6 +135,11 @@ type OutboundTLSOptions struct {
 	ECH                        *OutboundECHOptions                 `json:"ech,omitempty"`
 	UTLS                       *OutboundUTLSOptions                `json:"utls,omitempty"`
 	Reality                    *OutboundRealityOptions             `json:"reality,omitempty"`
+}
+
+type TLSClientSPIFFEOptions struct {
+	Endpoint string `json:"endpoint"`
+	ID       string `json:"id"`
 }
 
 type OutboundTLSOptionsContainer struct {

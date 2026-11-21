@@ -71,6 +71,9 @@ func (c *STDClientConfig) SetHandshakeTimeout(timeout time.Duration) {
 }
 
 func (c *STDClientConfig) STDConfig() (*STDConfig, error) {
+	if c.config.GetClientCertificate != nil {
+		return nil, E.New("client_spiffe requires a TCP TLS handshake")
+	}
 	return c.config, nil
 }
 
@@ -81,6 +84,9 @@ func (c *STDClientConfig) Client(conn net.Conn) (Conn, error) {
 	conn, err := applyTLSSpoof(conn, c.spoof, c.spoofMethod)
 	if err != nil {
 		return nil, err
+	}
+	if c.config.GetClientCertificate != nil {
+		return newSPIFFEClientConn(conn, c.config), nil
 	}
 	return tls.Client(conn, c.config), nil
 }
@@ -112,6 +118,9 @@ func (c *STDClientConfig) SetECHConfigList(EncryptedClientHelloConfigList []byte
 }
 
 func NewSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddress string, options option.OutboundTLSOptions) (Config, error) {
+	if err := validateClientSPIFFEOptions(options); err != nil {
+		return nil, err
+	}
 	return newSTDClient(ctx, logger, serverAddress, options, false)
 }
 
@@ -220,6 +229,13 @@ func newSTDClient(ctx context.Context, logger logger.ContextLogger, serverAddres
 		tlsConfig.Certificates = []tls.Certificate{keyPair}
 	} else if len(clientCertificate) > 0 || len(clientKey) > 0 {
 		return nil, E.New("client certificate and client key must be provided together")
+	}
+	if options.ClientSPIFFE != nil {
+		getCertificate, err := spiffeClientCertificate(*options.ClientSPIFFE)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.GetClientCertificate = getCertificate
 	}
 	var handshakeTimeout time.Duration
 	if options.HandshakeTimeout > 0 {

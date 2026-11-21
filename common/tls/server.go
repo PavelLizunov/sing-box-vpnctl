@@ -28,6 +28,9 @@ func NewServer(ctx context.Context, logger log.ContextLogger, options option.Inb
 }
 
 func NewServerWithOptions(options ServerOptions) (ServerConfig, error) {
+	if err := validateServerSPIFFEOptions(options.Options); err != nil {
+		return nil, err
+	}
 	if !options.Options.Enabled {
 		return nil, nil
 	}

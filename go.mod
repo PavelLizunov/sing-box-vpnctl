@@ -93,6 +93,7 @@ require (
 	github.com/sagernet/wireguard-go v0.0.8-0.20261022215841-e4d85ef2ed38
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/spf13/cobra v1.10.2
+	github.com/spiffe/go-spiffe/v2 v2.7.0
 	github.com/stretchr/testify v1.12.0
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	github.com/vishvananda/netns v0.0.5
@@ -117,6 +118,7 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/RyuaNerin/go-krypto v1.3.0 // indirect
 	github.com/ajg/form v1.5.1 // indirect
 	github.com/akutz/memconn v0.1.0 // indirect

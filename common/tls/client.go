@@ -46,9 +46,6 @@ func applyTLSSpoof(conn net.Conn, spoof string, method tlsspoof.Method) (net.Con
 }
 
 func NewDialerFromOptions(ctx context.Context, logger logger.ContextLogger, dialer N.Dialer, serverAddress string, options option.OutboundTLSOptions) (N.Dialer, error) {
-	if !options.Enabled {
-		return dialer, nil
-	}
 	config, err := NewClientWithOptions(ClientOptions{
 		Context:       ctx,
 		Logger:        logger,
@@ -57,6 +54,9 @@ func NewDialerFromOptions(ctx context.Context, logger logger.ContextLogger, dial
 	})
 	if err != nil {
 		return nil, err
+	}
+	if config == nil {
+		return dialer, nil
 	}
 	return NewDialer(dialer, config), nil
 }
@@ -80,6 +80,9 @@ type ClientOptions struct {
 }
 
 func NewClientWithOptions(options ClientOptions) (Config, error) {
+	if err := validateClientSPIFFEOptions(options.Options); err != nil {
+		return nil, err
+	}
 	if !options.Options.Enabled {
 		return nil, nil
 	}

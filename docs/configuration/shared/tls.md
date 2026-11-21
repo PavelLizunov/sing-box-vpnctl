@@ -54,6 +54,7 @@ icon: material/new-box
   "client_certificate": [],
   "client_certificate_path": [],
   "client_certificate_public_key_sha256": [],
+  "client_spiffe_id": [],
   "key": [],
   "key_path": "",
   "kernel_tx": false,
@@ -127,6 +128,10 @@ icon: material/new-box
   "client_certificate_path": "",
   "client_key": [],
   "client_key_path": "",
+  "client_spiffe": {
+    "endpoint": "unix:///run/spire/agent.sock",
+    "id": "spiffe://example.org/vpnrouter/core"
+  },
   "fragment": false,
   "fragment_fallback_delay": "",
   "record_fragment": false,
@@ -380,6 +385,14 @@ The server private key line array, in PEM format.
     Will be automatically reloaded if file modified.
 
 The path to the server private key, in PEM format.
+
+#### client_spiffe
+
+Client only. Obtains the specified X.509 workload identity from the local SPIFFE Workload API during a TCP TLS handshake. Use an explicit `unix://` endpoint on Unix or `npipe:` endpoint on Windows. Requires verified TLS with the Go engine and conflicts with static client certificates and keys. The connection fails if the server does not request a client certificate.
+
+#### client_spiffe_id
+
+Server only. Allows a client when its verified certificate carries one of the listed SPIFFE IDs. Set `client_authentication` to `require-and-verify` and configure the issuing CA with `client_certificate` or `client_certificate_path`. Each connection performs a fresh handshake.
 
 #### client_authentication
 

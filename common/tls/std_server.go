@@ -331,6 +331,9 @@ func (c *STDServerConfig) Close() error {
 }
 
 func NewSTDServer(ctx context.Context, logger log.ContextLogger, options option.InboundTLSOptions) (ServerConfig, error) {
+	if err := validateServerSPIFFEOptions(options); err != nil {
+		return nil, err
+	}
 	if !options.Enabled {
 		return nil, nil
 	}
@@ -485,6 +488,25 @@ func NewSTDServer(ctx context.Context, logger log.ContextLogger, options option.
 		} else {
 			return nil, E.New("missing client_certificate, client_certificate_path or client_certificate_public_key_sha256 for client authentication")
 		}
+	}
+	if len(options.ClientSPIFFEID) > 0 {
+		if tlsConfig.ClientAuth != tls.RequireAndVerifyClientCert || tlsConfig.ClientCAs == nil {
+			return nil, E.New("client_spiffe_id requires client certificate authority verification")
+		}
+		verify, err := spiffeServerVerifier(options.ClientSPIFFEID)
+		if err != nil {
+			return nil, err
+		}
+		previousVerify := tlsConfig.VerifyConnection
+		tlsConfig.VerifyConnection = func(connection tls.ConnectionState) error {
+			if previousVerify != nil {
+				if err := previousVerify(connection); err != nil {
+					return err
+				}
+			}
+			return verify(connection)
+		}
+		tlsConfig.SessionTicketsDisabled = true
 	}
 	var echKeyPath string
 	if options.ECH != nil && options.ECH.Enabled {
