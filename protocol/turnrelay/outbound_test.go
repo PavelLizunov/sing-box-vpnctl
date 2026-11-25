@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/exit"
 	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/obfs"
+	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/relay"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +31,13 @@ const (
 
 func startTURNServer(t *testing.T) *net.UDPAddr {
 	t.Helper()
-	packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	address, _ := listenTURN(t, "127.0.0.1:0")
+	return address
+}
+
+func listenTURN(t *testing.T, address string) (*net.UDPAddr, func()) {
+	t.Helper()
+	packet, err := net.ListenPacket("udp4", address)
 	require.NoError(t, err)
 	const realm = "turnrelay.test"
 	key := pionturn.GenerateAuthKey(testTURNUser, realm, testTURNPassword)
@@ -53,11 +61,35 @@ func startTURNServer(t *testing.T) *net.UDPAddr {
 		}},
 	})
 	require.NoError(t, err)
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		_ = server.Close()
 		_ = packet.Close()
 	})
-	return packet.LocalAddr().(*net.UDPAddr)
+	t.Cleanup(stop)
+	return packet.LocalAddr().(*net.UDPAddr), stop
+}
+
+type detouredConn struct{ net.Conn }
+
+func (detouredConn) RemoteAddr() net.Addr { return M.ParseSocksaddr("relay.invalid:3478") }
+
+func TestRelayAllocationThroughNamedDetour(t *testing.T) {
+	address := startTURNServer(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	allocation, err := relay.Allocate(ctx, relay.Options{
+		Server: "relay.invalid:3478", Username: testTURNUser, Password: testTURNPassword, UDP: true,
+		DialContext: func(ctx context.Context, network, remote string) (net.Conn, error) {
+			require.Equal(t, "relay.invalid:3478", remote)
+			c, err := (&net.Dialer{}).DialContext(ctx, network, address.String())
+			if err != nil {
+				return nil, err
+			}
+			return detouredConn{c}, nil
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, allocation.Close())
 }
 
 func startExitServer(t *testing.T, mode obfs.Mode) (*net.UDPAddr, []byte) {
@@ -138,6 +170,46 @@ func startUDPEcho(t *testing.T) *net.UDPAddr {
 		}
 	}()
 	return packet.LocalAddr().(*net.UDPAddr)
+}
+
+func TestExitSurvivesRelayRestart(t *testing.T) {
+	address, stop := listenTURN(t, "127.0.0.1:0")
+	exitAddr, fingerprint := startExitServer(t, obfs.ModeDTLS)
+	out := testOutbound(t, address, exitAddr, fingerprint, 2, "dtls")
+	readyCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, out.pool.WaitReady(readyCtx, 2))
+	peer := M.SocksaddrFromNet(startUDPEcho(t))
+	var nonce byte
+	echo := func() bool {
+		conn, err := out.DialContext(t.Context(), "udp", peer)
+		if err != nil {
+			return false
+		}
+		defer conn.Close()
+		nonce++
+		if _, err := conn.Write([]byte{nonce}); err != nil {
+			return false
+		}
+		if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+			return false
+		}
+		var reply [8]byte
+		for {
+			n, err := conn.Read(reply[:])
+			if err != nil {
+				return false
+			}
+			if n == 1 && reply[0] == nonce {
+				return true
+			}
+		}
+	}
+	require.Eventually(t, echo, 10*time.Second, 200*time.Millisecond)
+	stop()
+	require.False(t, echo())
+	listenTURN(t, address.String())
+	require.Eventually(t, echo, 40*time.Second, 300*time.Millisecond)
 }
 
 func TestExitOverStaticTURN(t *testing.T) {

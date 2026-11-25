@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -59,6 +60,8 @@ func (c *connectedConn) ReadFrom(b []byte) (int, net.Addr, error) {
 
 func (c *connectedConn) WriteTo(b []byte, _ net.Addr) (int, error) { return c.Conn.Write(b) }
 
+func (c *connectedConn) RemoteAddr() net.Addr { return c.peer }
+
 // dialUDP opens the connected UDP socket to raddr, through o.DialContext
 // when set.
 func dialUDP(ctx context.Context, o Options, raddr *net.UDPAddr) (net.PacketConn, io.Closer, error) {
@@ -98,20 +101,24 @@ func dialCustom(ctx context.Context, o Options) (string, net.PacketConn, io.Clos
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("relay: dial %s: %w", network, err)
 	}
-	peer := c.RemoteAddr()
-	if peer == nil {
-		_ = c.Close()
-		return "", nil, nil, errors.New("relay: dial returned no remote address")
+	address := "0.0.0.0:0"
+	peer := net.Addr(&net.UDPAddr{IP: net.IPv4zero})
+	if remote := c.RemoteAddr(); remote != nil {
+		if ipPort, parseErr := netip.ParseAddrPort(remote.String()); parseErr == nil {
+			address = ipPort.String()
+			peer = net.UDPAddrFromAddrPort(ipPort)
+		}
 	}
-	address := peer.String()
+	// Invariant: Pion uses a numeric identifier for this connected socket, including detours that hide the relay IP.
+	connected := &connectedConn{Conn: c, peer: peer}
 	if !o.UDP {
-		return address, turn.NewSTUNConn(c), c, nil
+		return address, turn.NewSTUNConn(connected), c, nil
 	}
 	if uc, ok := c.(*net.UDPConn); ok {
 		setBuffers(uc)
 		return address, &connectedUDP{uc}, uc, nil
 	}
-	return address, &connectedConn{Conn: c, peer: peer}, c, nil
+	return address, connected, c, nil
 }
 
 func setBuffers(c *net.UDPConn) {

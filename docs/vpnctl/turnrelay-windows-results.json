@@ -1,0 +1,44 @@
+{
+  "test_date": "2026-11-25",
+  "windows_build": "10.0.26200.6584",
+  "core_version": "v1.14.4-vpnctl-turnrelay.4",
+  "core_sha256": "9c4f6e041b16ea5ce2c02f615f0fd816e682c4266ad40f6717989e5cf5f6c453",
+  "turnrelay_upstream": "4c3dc7ad19f564bf6a1e82ab53038cb85a835420",
+  "relay": "ACDN",
+  "exit": "Aruba Cloud",
+  "probe_url": "https://www.gstatic.com/generate_204",
+  "timeout_seconds": 12,
+  "client_to_relay": "udp",
+  "mode": "dtls",
+  "connections": 2,
+  "targets": {
+    "bitfolk": [
+      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.004612},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.957607},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.94485},
+      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.01063},
+      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.009506},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.963585}
+    ],
+    "transip": [
+      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.005013},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.310105},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 2.352511},
+      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.0095},
+      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.014827},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.250716}
+    ],
+    "aruba": [
+      {"attempt": 1, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.383097},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.783874},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.774515},
+      {"attempt": 2, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.420238},
+      {"attempt": 3, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.52533},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.826218}
+    ]
+  },
+  "relay_restart_seconds": {
+    "udp": 9.73,
+    "tcp": 5.12
+  }
+}

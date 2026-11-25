@@ -12,6 +12,8 @@ The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile 
 
 The optional `with_turn` tag adds [TURN over TLS](turn.md) for controlled relays. Release profiles omit it.
 
+The independent `with_turnrelay` tag enables [TurnRelay exit](turnrelay.md) with static TURN credentials and a pinned exit certificate. Append it to the release build tags to keep the normal VLESS/REALITY and TUN support in the same binary.
+
 ## Building from source
 
 Go 1.26.11 is used for the measurements in the [transport guide](transports.md). The fork's CI, verification and release workflows pin 1.26.11 so a cached older 1.26 toolchain cannot reintroduce GO-2026-6809.

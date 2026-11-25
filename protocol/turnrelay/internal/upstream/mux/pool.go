@@ -160,6 +160,16 @@ func New(o Options) *Pool {
 
 func (p *Pool) Session() [16]byte { return p.session }
 
+func (p *Pool) LastProbeReply() time.Time {
+	var latest time.Time
+	for i, h := range p.health {
+		if reply := h.snapshot(i).lastAck; reply.After(latest) {
+			latest = reply
+		}
+	}
+	return latest
+}
+
 func (p *Pool) Start(ctx context.Context) {
 	ctx, p.cancel = context.WithCancel(ctx)
 	p.health = make([]*workerHealth, p.o.Workers)

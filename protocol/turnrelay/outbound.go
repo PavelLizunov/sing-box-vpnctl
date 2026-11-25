@@ -39,12 +39,15 @@ type Outbound struct {
 	outbound.Adapter
 	ctx     context.Context
 	pool    *mux.Pool
+	options mux.Options
 	peer    *net.UDPAddr
 	logf    func(string, ...any)
 	mu      sync.Mutex
 	client  *exit.Client
 	started bool
 	closed  bool
+	cancel  context.CancelFunc
+	watcher sync.WaitGroup
 }
 
 func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options Options) (adapter.Outbound, error) {
@@ -73,20 +76,22 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
 		Logf:   logf,
 	})
 	peer := net.UDPAddrFromAddrPort(cfg.server)
-	pool := mux.New(mux.Options{
-		Workers:     cfg.connections,
-		Peer:        peer,
-		Wrapper:     wrapper,
-		Creds:       creds,
-		TURNUDP:     cfg.udp,
-		Logf:        logf,
-		DialContext: hook,
-		Password:    cfg.password,
-	})
+	poolOptions := mux.Options{
+		ProbeInterval: 3 * time.Second,
+		ZombieAfter:   12 * time.Second,
+		Workers:       cfg.connections,
+		Peer:          peer,
+		Wrapper:       wrapper,
+		Creds:         creds,
+		TURNUDP:       cfg.udp,
+		Logf:          logf,
+		DialContext:   hook,
+		Password:      cfg.password,
+	}
 	return &Outbound{
 		Adapter: outbound.NewAdapterWithDialerOptions(Type, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
 		ctx:     ctx,
-		pool:    pool,
+		options: poolOptions,
 		peer:    peer,
 		logf:    logf,
 	}, nil
@@ -122,14 +127,60 @@ func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		lifetime = scope.Context()
 		scope.Add(o.Close)
 	}
-	o.pool.Start(lifetime)
-	o.client = exit.NewClient(newRelayPipe(o.pool, o.peer), o.peer, exit.ClientOptions{Logf: o.logf})
+	lifetime, o.cancel = context.WithCancel(lifetime)
+	o.startSession(lifetime)
 	o.started = true
+	o.watcher.Go(func() { o.watchSession(lifetime) })
 	return nil
 }
 
+func (o *Outbound) startSession(ctx context.Context) {
+	o.pool = mux.New(o.options)
+	o.pool.Start(ctx)
+	o.client = exit.NewClient(newRelayPipe(o.pool, o.peer), o.peer, exit.ClientOptions{Logf: o.logf})
+}
+
+func (o *Outbound) watchSession(ctx context.Context) {
+	ticker := time.NewTicker(o.options.ProbeInterval)
+	defer ticker.Stop()
+	var lastReply time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			o.mu.Lock()
+			if o.closed {
+				o.mu.Unlock()
+				return
+			}
+			if reply := o.pool.LastProbeReply(); reply.After(lastReply) {
+				lastReply = reply
+			} else if lastReply.IsZero() && o.pool.Stats().Active > 0 {
+				lastReply = now
+			}
+			if lastReply.IsZero() || now.Sub(lastReply) < o.options.ZombieAfter {
+				o.mu.Unlock()
+				continue
+			}
+			// Protocol: new workers sharing the old session ID can compete with stale workers on the exit for replies.
+			oldPool, oldClient := o.pool, o.client
+			o.logf("turnrelay: no exit probe replies; rebuilding the session")
+			o.startSession(ctx)
+			o.mu.Unlock()
+			oldPool.Close()
+			_ = oldClient.Close()
+			lastReply = time.Time{}
+		}
+	}
+}
+
 func (o *Outbound) InterfaceUpdated(context.Context) {
-	o.pool.Handover("interface updated")
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.started && !o.closed {
+		o.pool.Handover("interface updated")
+	}
 }
 
 func (o *Outbound) Close() error {
@@ -139,13 +190,17 @@ func (o *Outbound) Close() error {
 		return nil
 	}
 	o.closed = true
-	client := o.client
+	pool, client := o.pool, o.client
 	o.client = nil
+	if o.cancel != nil {
+		o.cancel()
+	}
 	o.mu.Unlock()
 	if client != nil {
+		pool.Close()
 		_ = client.Close()
 	}
-	o.pool.Close()
+	o.watcher.Wait()
 	return nil
 }
 
