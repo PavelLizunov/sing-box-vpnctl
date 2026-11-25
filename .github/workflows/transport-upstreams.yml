@@ -1,0 +1,29 @@
+name: Transport upstream changes
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '28 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Compare upstream references and releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/check_transport_upstreams.py --output "$RUNNER_TEMP/transport-upstreams.json"
+      - name: Save upstream report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: transport-upstreams
+          path: ${{ runner.temp }}/transport-upstreams.json
+          if-no-files-found: error

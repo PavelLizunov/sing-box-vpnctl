@@ -10,9 +10,11 @@ Release binaries use the upstream tag set plus three tags of the fork:
 
 The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile library uses the list in `cmd/internal/build_libbox/main.go`.
 
+The optional `with_turn` tag adds [TURN over TLS](turn.md) for controlled relays. Release profiles omit it.
+
 ## Building from source
 
-Go 1.26.10 or newer. The fork's CI, verification and release workflows pin 1.26.10 so a cached older 1.26 toolchain cannot reintroduce GO-2026-6809.
+Go 1.26.11 is used for the measurements in the [transport guide](transports.md). The fork's CI, verification and release workflows pin 1.26.11 so a cached older 1.26 toolchain cannot reintroduce GO-2026-6809.
 
 ```bash
 git clone \

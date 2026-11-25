@@ -14,12 +14,18 @@
 .github/workflows/ci.yml
 .github/workflows/release.yml
 .github/workflows/verify.yml
+.github/workflows/transport-upstreams.yml
+AGENTS.md
 ARCHITECTURE.md
+cmd/internal/build_libbox/turn.go
 common/trafficcontrol/vpnctl_user_bandwidth*.go
 README.md
 README.ru.md
 docs/vpnctl/*
 include/dnstt.go
+include/turn.go
+include/turn_stub.go
+include/turn_wireguard_test.go
 include/v2rayxhttp.go
 option/dnstt.go
 option/v2ray_xhttp*.go
@@ -27,6 +33,7 @@ option/vpnctl_user_bandwidth.go
 option/vpnctl_user_bandwidth_test.go
 option/wireguard_awg*.go
 protocol/dnstt/*
+protocol/turn/*
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
 release/fork_boundary_test.py
@@ -36,6 +43,9 @@ release/v*-vpnctl.*.md
 scripts/awg_official_interop.py
 scripts/awg_official_interop_test.py
 scripts/awg_runtime_probe.py
+scripts/check_transport_upstreams.py
+scripts/check_transport_upstreams_test.py
+scripts/turn_tun_probe.py
 transport/v2ray/registry.go
 transport/v2rayxhttp/*
 transport/wireguard/*awg*
@@ -53,8 +63,8 @@ constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
 # Module pins carry grpc and the x/net v0.62.0 dependency set ahead of upstream
 # to close published vulnerabilities; drop that part when upstream catches up.
-go.mod +55 -45
-go.sum +123 -102
+go.mod +67 -48
+go.sum +139 -102
 include/registry.go +1 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0

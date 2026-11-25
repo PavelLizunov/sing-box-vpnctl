@@ -93,7 +93,7 @@ require (
 	github.com/sagernet/wireguard-go v0.0.8-0.20261022215841-e4d85ef2ed38
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.12.0
+	github.com/stretchr/testify v1.12.1
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	github.com/vishvananda/netns v0.0.5
 	github.com/xtaci/kcp-go/v5 v5.6.61
@@ -112,6 +112,12 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.11
 	howett.net/plist v1.0.1
+)
+
+require (
+	github.com/pion/logging v0.2.4
+	github.com/pion/transport/v5 v5.1.1
+	github.com/pion/turn/v5 v5.1.3
 )
 
 require (
@@ -168,8 +174,9 @@ require (
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
-	github.com/pion/dtls/v3 v3.1.5 // indirect
-	github.com/pion/logging v0.2.4 // indirect
+	github.com/pion/dtls/v3 v3.1.9 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/stun/v4 v4.0.1 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pires/go-proxyproto v0.8.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -190,11 +197,13 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/u-root/uio v0.0.0-20240224005618-d2acac8f3701 // indirect
+	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
