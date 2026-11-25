@@ -30,7 +30,7 @@ jobs:
       - name: Check that no comments were added to the fork's own files
         if: github.event_name == 'pull_request'
         run: |
-          python3 -B release/hygiene/fork_scope.py --upstream "$(cut -d' ' -f1 release/FORK_UPSTREAM_BASE)" --derived submodules/wireguard-go --list FORK_ADDED | grep -v '^release/hygiene/' > "$RUNNER_TEMP/fork-owned.txt"
+          python3 -B release/hygiene/fork_scope.py --upstream "$(cut -d' ' -f1 release/FORK_UPSTREAM_BASE)" --derived submodules/wireguard-go --derived protocol/turnrelay/internal/upstream --list FORK_ADDED | grep -v '^release/hygiene/' > "$RUNNER_TEMP/fork-owned.txt"
           python3 -B release/hygiene/added_comments.py --base "origin/${{ github.base_ref }}" --max 0 --allow '^\s*// (Invariant|Race|Quirk|Protocol): ' --paths-from "$RUNNER_TEMP/fork-owned.txt"
 
       - name: Setup Go
@@ -52,6 +52,11 @@ jobs:
         run: |
           go test -race -count=1 -timeout=120s -ldflags=-checklinkname=0 -tags with_turn ./protocol/turn
           go test -race -count=1 -timeout=120s -ldflags=-checklinkname=0 -tags with_turn,with_gvisor,with_wireguard ./include -run '^TestWireGuardDetourOverTURN$'
+
+      - name: Test opt-in TurnRelay exit over static TURN
+        run: |
+          go test -race -count=1 -timeout=180s -ldflags=-checklinkname=0 -tags with_turnrelay ./protocol/turnrelay
+          go test -race -count=1 -timeout=60s -ldflags=-checklinkname=0 -tags with_turnrelay ./include -run '^TestTurnRelay(OutboundRegistered|BoxStarts)$'
 
       - name: Test DNSTT interoperability
         run: |

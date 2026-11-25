@@ -173,7 +173,9 @@ jobs:
             -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
           go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
             -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
-          ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn"
+          go build -trimpath -tags "$TAGS,with_turnrelay" -ldflags '-s -w -checklinkname=0' \
+            -o "$RUNNER_TEMP/sing-box-turnrelay" ./cmd/sing-box
+          ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn" "$RUNNER_TEMP/sing-box-turnrelay"
 
   vulnerabilities:
     name: Known vulnerabilities

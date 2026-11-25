@@ -8,4 +8,5 @@ import (
 func registerVPNCTLOutbounds(registry *outbound.Registry) {
 	dnstt.RegisterOutbound(registry)
 	registerTURN(registry)
+	registerTurnRelay(registry)
 }

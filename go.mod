@@ -115,9 +115,16 @@ require (
 )
 
 require (
+	github.com/klauspost/reedsolomon v1.13.0
+	github.com/pion/dtls/v3 v3.1.9
 	github.com/pion/logging v0.2.4
+	github.com/pion/rtp v1.10.5
+	github.com/pion/srtp/v3 v3.0.15
+	github.com/pion/stun/v4 v4.0.1
+	github.com/pion/transport/v4 v4.1.0
 	github.com/pion/transport/v5 v5.1.1
 	github.com/pion/turn/v5 v5.1.3
+	golang.org/x/time v0.15.0
 )
 
 require (
@@ -165,7 +172,6 @@ require (
 	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/klauspost/reedsolomon v1.13.0 // indirect
 	github.com/koron/go-ssdp v0.0.4 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/libp2p/go-nat v1.0.1-0.20250821073202-01afc089f138 // indirect
@@ -174,10 +180,8 @@ require (
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
-	github.com/pion/dtls/v3 v3.1.9 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
-	github.com/pion/stun/v4 v4.0.1 // indirect
-	github.com/pion/transport/v4 v4.0.2 // indirect
+	github.com/pion/rtcp v1.2.17 // indirect
 	github.com/pires/go-proxyproto v0.8.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
@@ -206,12 +210,10 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org/mem v0.0.0-20240501181205-ae6ca9944745 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2 // indirect
 	golang.zx2c4.com/wireguard/windows v0.5.3 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.3.0 // indirect
 	zombiezen.com/go/capnproto2 v2.18.2+incompatible // indirect
 )
