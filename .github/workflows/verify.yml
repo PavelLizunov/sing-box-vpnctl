@@ -173,9 +173,8 @@ jobs:
             -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
           go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
             -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
-          go build -trimpath -tags "$TAGS,with_turnrelay" -ldflags '-s -w -checklinkname=0' \
-            -o "$RUNNER_TEMP/sing-box-turnrelay" ./cmd/sing-box
-          ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn" "$RUNNER_TEMP/sing-box-turnrelay"
+          go version -m "$RUNNER_TEMP/sing-box" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+          ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn"
 
   vulnerabilities:
     name: Known vulnerabilities
@@ -197,7 +196,9 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
-          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS,with_turn,with_turnrelay" ./...
+          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS,with_turn" ./...
+          CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags '-s -w -checklinkname=0' -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
+          "$(go env GOPATH)/bin/govulncheck" -mode binary "$RUNNER_TEMP/sing-box"
 
   android:
     name: Android library
@@ -237,9 +238,19 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          make lib_android
+          go run -tags with_turnrelay ./cmd/internal/build_libbox -target android
           ls -l libbox*.aar
           sha256sum libbox*.aar
+
+      - name: Verify TurnRelay in every Android ABI
+        run: |
+          for aar in libbox.aar libbox-legacy.aar; do
+            unzip -tq "$aar"
+            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+              unzip -p "$aar" "jni/$abi/libbox.so" > "$RUNNER_TEMP/libbox.so"
+              go version -m "$RUNNER_TEMP/libbox.so" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+            done
+          done
 
       - name: Upload the library for device testing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

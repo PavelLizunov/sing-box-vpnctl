@@ -12,7 +12,7 @@ The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile 
 
 The optional `with_turn` tag adds [TURN over TLS](turn.md) for controlled relays. Release profiles omit it.
 
-The independent `with_turnrelay` tag enables [TurnRelay exit](turnrelay.md) with static TURN credentials and a pinned exit certificate. Append it to the release build tags to keep the normal VLESS/REALITY and TUN support in the same binary.
+Desktop release profiles and both Android AARs include `with_turnrelay`. The tag enables [TurnRelay exit](turnrelay.md) with static TURN credentials, a pinned exit certificate, and two allocations by default. To build the Android AARs from this checkout, install the gomobile tools with `make lib_install` and run `go run -tags with_turnrelay ./cmd/internal/build_libbox -target android`. Omit `with_turnrelay` for a custom build that excludes the outbound.
 
 ## Building from source
 

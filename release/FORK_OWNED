@@ -67,10 +67,9 @@ option/route.go +1 -0
 cmd/internal/build_libbox/main.go +1 -1
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
-# Module pins carry grpc and the x/net v0.62.0 dependency set ahead of upstream
-# to close published vulnerabilities; drop that part when upstream catches up.
-go.mod +72 -51
-go.sum +153 -109
+# Module pins carry security fixes ahead of upstream for grpc, chi, dhcp and x/ modules.
+go.mod +74 -53
+go.sum +171 -109
 include/registry.go +1 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
