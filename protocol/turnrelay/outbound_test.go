@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/exit"
+	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/mux"
 	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/obfs"
 	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/relay"
 	M "github.com/sagernet/sing/common/metadata"
@@ -178,8 +181,14 @@ func TestExitSurvivesRelayRestart(t *testing.T) {
 	out := testOutbound(t, address, exitAddr, fingerprint, 2, "dtls")
 	readyCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	require.NoError(t, out.pool.WaitReady(readyCtx, 2))
+	out.mu.Lock()
+	original := out.pool
+	out.mu.Unlock()
+	require.NoError(t, original.WaitReady(readyCtx, 2))
 	peer := M.SocksaddrFromNet(startUDPEcho(t))
+	previous, err := out.DialContext(t.Context(), "udp", peer)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = previous.Close() })
 	var nonce byte
 	echo := func() bool {
 		conn, err := out.DialContext(t.Context(), "udp", peer)
@@ -208,8 +217,89 @@ func TestExitSurvivesRelayRestart(t *testing.T) {
 	require.Eventually(t, echo, 10*time.Second, 200*time.Millisecond)
 	stop()
 	require.False(t, echo())
+	require.Eventually(t, func() bool {
+		out.mu.Lock()
+		defer out.mu.Unlock()
+		return out.pool != nil && out.pool.Session() != original.Session()
+	}, 35*time.Second, 200*time.Millisecond)
+	require.NoError(t, previous.SetReadDeadline(time.Now().Add(time.Second)))
+	_, err = previous.Read(make([]byte, 1))
+	require.ErrorIs(t, err, net.ErrClosed)
 	listenTURN(t, address.String())
 	require.Eventually(t, echo, 40*time.Second, 300*time.Millisecond)
+}
+
+type dropProbeEchoConn struct {
+	net.Conn
+	dropped atomic.Int32
+}
+
+func (c *dropProbeEchoConn) Write(b []byte) (int, error) {
+	if _, ok := mux.ParseProbe(b); ok {
+		c.dropped.Add(1)
+		return len(b), nil
+	}
+	return c.Conn.Write(b)
+}
+
+func TestExitKeepsLiveStreamWithoutProbeReplies(t *testing.T) {
+	cert, err := obfs.GenerateServerCert()
+	require.NoError(t, err)
+	listener, err := obfs.Listen(obfs.ModeDTLS, "127.0.0.1:0", obfs.ListenOptions{Cert: &cert})
+	require.NoError(t, err)
+	defer listener.Close()
+	serverMux := mux.NewServer(mux.ServerOptions{Password: testExitPassword})
+	defer serverMux.Close()
+	server := exit.NewServer(serverMux.PacketConn(), exit.ServerOptions{AllowPrivate: true})
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)
+	defer cancel()
+	go server.Serve(ctx)
+
+	out := testOutbound(t, startTURNServer(t), listener.Addr().(*net.UDPAddr), obfs.CertFingerprint(cert), 1, "dtls")
+	allocation, err := listener.Accept(ctx)
+	require.NoError(t, err)
+	filter := &dropProbeEchoConn{Conn: allocation}
+	go serverMux.Handle(ctx, filter)
+
+	conn, err := out.DialContext(ctx, "tcp", M.SocksaddrFromNet(startTCPEcho(t)))
+	require.NoError(t, err)
+	defer conn.Close()
+	end := time.Now().Add(out.options.ZombieAfter + 2*out.options.ProbeInterval)
+	for nonce := byte(1); ; nonce++ {
+		require.NoError(t, conn.SetDeadline(time.Now().Add(2*time.Second)))
+		_, err := conn.Write([]byte{nonce})
+		require.NoError(t, err)
+		var reply [1]byte
+		_, err = io.ReadFull(conn, reply[:])
+		require.NoError(t, err)
+		require.Equal(t, nonce, reply[0])
+		if time.Now().After(end) {
+			break
+		}
+		time.Sleep(out.options.ProbeInterval / 2)
+	}
+	require.Positive(t, filter.dropped.Load())
+}
+
+func TestExitExpiresInactiveAllocation(t *testing.T) {
+	server := mux.NewServer(mux.ServerOptions{Password: testExitPassword, ZombieAfter: 200 * time.Millisecond})
+	defer server.Close()
+	local, remote := net.Pipe()
+	defer local.Close()
+	done := make(chan error, 1)
+	go func() { done <- server.Handle(t.Context(), remote) }()
+	session := [16]byte{7}
+	_, err := local.Write(mux.EncodeHello(session))
+	require.NoError(t, err)
+	_, err = local.Write(mux.EncodeAuth(mux.AuthTag(testExitPassword, session)))
+	require.NoError(t, err)
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle authenticated allocation still holds the session")
+	}
 }
 
 func TestExitOverStaticTURN(t *testing.T) {

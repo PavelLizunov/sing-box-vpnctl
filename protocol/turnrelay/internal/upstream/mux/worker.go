@@ -259,6 +259,7 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				return
 			}
 			lastInbound.Store(time.Now().UnixNano())
+			p.received.Add(1)
 			if n == 0 {
 				continue
 			}

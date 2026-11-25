@@ -162,7 +162,6 @@ func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
 		s.o.Logf("mux: auth failed for an allocation from %s", conn.RemoteAddr())
 		return ErrAuth
 	}
-	_ = conn.SetReadDeadline(time.Time{})
 
 	sess := s.join(SessionAddr(session))
 	defer s.leave(sess)
@@ -198,6 +197,10 @@ func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
 	go func() {
 		rbuf := make([]byte, 65535)
 		for {
+			if err := conn.SetReadDeadline(time.Now().Add(s.o.ZombieAfter)); err != nil {
+				errCh <- err
+				return
+			}
 			n, err := conn.Read(rbuf)
 			if err != nil {
 				errCh <- err

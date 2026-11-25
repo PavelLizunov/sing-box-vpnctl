@@ -11,8 +11,10 @@ Local changes:
   relay dials through the sing-box dialer first, so the TURN hostname is resolved
   by the core resolver and the socket obeys detour and bind options. Abstract
   detour sockets use a numeric peer identifier to avoid a second DNS lookup.
-  mux exposes the most recent authenticated probe reply so the adapter can
-  replace a stale session and recover after a relay restart.
+  mux counts authenticated inbound frames so the adapter can replace a stale
+  session after complete silence. The exit bounds idle allocation reads with
+  its ZombieAfter timeout; the patched mux/server.go also builds unchanged in
+  the pinned upstream server checkout.
   provider/vk, app, tray, cmd, and the upstream singbox adapter are not copied.
   the outbound exposes static credentials with exit only, srtp or dtls obfs,
   and requires the server certificate SHA-256; wrap is not exposed.

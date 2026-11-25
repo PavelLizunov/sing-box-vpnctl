@@ -20,8 +20,6 @@ if ($original.detour -or $relay.detour) {
     throw 'Supply standalone outbounds. This probe supplies the detour for the second path.'
 }
 $relay | Add-Member -Force NoteProperty tag 'probe-turnrelay'
-$temp = Join-Path ([IO.Path]::GetTempPath()) ('turnrelay-' + [guid]::NewGuid())
-[void][IO.Directory]::CreateDirectory($temp)
 
 function Invoke-PathProbe([string]$mode, [int]$attempt) {
     $vless = $vlessJson | ConvertFrom-Json
@@ -40,10 +38,16 @@ function Invoke-PathProbe([string]$mode, [int]$attempt) {
         outbounds = $outbounds
         route = @{ final = $vless.tag }
     }
-    $file = Join-Path $temp 'probe.json'
-    [IO.File]::WriteAllText($file, ($config | ConvertTo-Json -Depth 64), [Text.UTF8Encoding]::new($false))
-    $p = Start-Process -FilePath $Core -ArgumentList @('run', '-c', ('"' + $file + '"')) -PassThru -NoNewWindow -RedirectStandardError (Join-Path $temp 'core.log') -RedirectStandardOutput (Join-Path $temp 'core.out')
+    $info = [Diagnostics.ProcessStartInfo]::new($Core, 'run -c stdin')
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $p = [Diagnostics.Process]::Start($info)
     try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes(($config | ConvertTo-Json -Depth 64))
+        $inputStream = $p.StandardInput.BaseStream
+        $inputStream.Write($bytes, 0, $bytes.Length)
+        $inputStream.Close()
         $startup = [Diagnostics.Stopwatch]::StartNew()
         while ($true) {
             if ($p.HasExited) { throw "Core exited during $mode startup (exit $($p.ExitCode))." }
@@ -73,5 +77,4 @@ try {
     }
 } finally {
     $env:NO_PROXY = $noProxy
-    Remove-Item -LiteralPath $temp -Recurse -Force
 }

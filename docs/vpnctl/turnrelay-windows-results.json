@@ -1,8 +1,8 @@
 {
   "test_date": "2026-11-25",
   "windows_build": "10.0.26200.6584",
-  "core_version": "v1.14.4-vpnctl-turnrelay.4",
-  "core_sha256": "9c4f6e041b16ea5ce2c02f615f0fd816e682c4266ad40f6717989e5cf5f6c453",
+  "core_version": "v1.14.4-vpnctl-turnrelay.5",
+  "core_sha256": "4e4de09a0c0dfc297cdb94aa0a61942a8c95ed88d7e283e011bf8654f0a53be7",
   "turnrelay_upstream": "4c3dc7ad19f564bf6a1e82ab53038cb85a835420",
   "relay": "ACDN",
   "exit": "Aruba Cloud",
@@ -13,32 +13,74 @@
   "connections": 2,
   "targets": {
     "bitfolk": [
-      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.004612},
-      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.957607},
-      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.94485},
-      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.01063},
-      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.009506},
-      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.963585}
+      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.015718},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.973137},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.914683},
+      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.004612},
+      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.009946},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.976181}
     ],
     "transip": [
-      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.005013},
-      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.310105},
-      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 2.352511},
-      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.0095},
-      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.014827},
-      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.250716}
+      {"attempt": 1, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.016329},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.279887},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.294506},
+      {"attempt": 2, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.0063},
+      {"attempt": 3, "path": "direct", "curl_exit": 28, "http": "000", "seconds": 12.007619},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 1.703709}
     ],
     "aruba": [
-      {"attempt": 1, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.383097},
-      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.783874},
-      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.774515},
-      {"attempt": 2, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.420238},
-      {"attempt": 3, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.52533},
-      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.826218}
+      {"attempt": 1, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.479297},
+      {"attempt": 1, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.88873},
+      {"attempt": 2, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.879903},
+      {"attempt": 2, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.349649},
+      {"attempt": 3, "path": "direct", "curl_exit": 0, "http": "204", "seconds": 0.353878},
+      {"attempt": 3, "path": "turnrelay", "curl_exit": 0, "http": "204", "seconds": 0.835712}
     ]
   },
   "relay_restart_seconds": {
-    "udp": 9.73,
-    "tcp": 5.12
-  }
+    "udp": 14.7,
+    "tcp": 6.02
+  },
+  "exit_mux_server_go_sha256": "a7d3b4e39854bb76a5bbafda88095ba5b702aa366bbb659afe752f3efcd05369",
+  "controls": {
+    "exit_http_challenge_matches": true,
+    "wrong_exit_pin_http": "000",
+    "wrong_vless_uuid_http": "000",
+    "udp_echo_matches": 3,
+    "udp_echo_attempts": 4,
+    "ipv4_tun_prefix_length": 32,
+    "ipv4_tun_http": "204",
+    "test_routes_after_exit": 0,
+    "dns_test": {
+      "type": "A",
+      "name": "myip.opendns.com",
+      "resolver": "208.67.222.222",
+      "transport": "udp",
+      "core_direct_to_resolver_blocked": true,
+      "answer_matches_exit_ip": true
+    }
+  },
+  "resource_samples": [
+    {
+      "profile": "release_direct",
+      "requests": 5,
+      "mean_working_set_bytes": 29557555,
+      "process_cpu_ms": 15.62,
+      "elapsed_seconds": 7.033
+    },
+    {
+      "profile": "opt_in_direct",
+      "requests": 5,
+      "mean_working_set_bytes": 29416653,
+      "process_cpu_ms": 0,
+      "elapsed_seconds": 6.9
+    },
+    {
+      "profile": "opt_in_active",
+      "requests": 5,
+      "mean_working_set_bytes": 34721792,
+      "process_cpu_ms": 171.88,
+      "elapsed_seconds": 8.642
+    }
+  ]
 }

@@ -42,6 +42,7 @@ type Outbound struct {
 	options mux.Options
 	peer    *net.UDPAddr
 	logf    func(string, ...any)
+	logger  log.ContextLogger
 	mu      sync.Mutex
 	client  *exit.Client
 	started bool
@@ -94,6 +95,7 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
 		options: poolOptions,
 		peer:    peer,
 		logf:    logf,
+		logger:  logger,
 	}, nil
 }
 
@@ -143,7 +145,8 @@ func (o *Outbound) startSession(ctx context.Context) {
 func (o *Outbound) watchSession(ctx context.Context) {
 	ticker := time.NewTicker(o.options.ProbeInterval)
 	defer ticker.Stop()
-	var lastReply time.Time
+	var lastPacket, nextRotation time.Time
+	var received uint64
 	for {
 		select {
 		case <-ctx.Done():
@@ -154,23 +157,32 @@ func (o *Outbound) watchSession(ctx context.Context) {
 				o.mu.Unlock()
 				return
 			}
-			if reply := o.pool.LastProbeReply(); reply.After(lastReply) {
-				lastReply = reply
-			} else if lastReply.IsZero() && o.pool.Stats().Active > 0 {
-				lastReply = now
+			if count := o.pool.Received(); count != received {
+				received = count
+				lastPacket = now
 			}
-			if lastReply.IsZero() || now.Sub(lastReply) < o.options.ZombieAfter {
+			if lastPacket.IsZero() || now.Sub(lastPacket) < o.options.ZombieAfter || now.Before(nextRotation) {
 				o.mu.Unlock()
 				continue
 			}
 			// Protocol: new workers sharing the old session ID can compete with stale workers on the exit for replies.
 			oldPool, oldClient := o.pool, o.client
-			o.logf("turnrelay: no exit probe replies; rebuilding the session")
-			o.startSession(ctx)
+			o.pool, o.client = nil, nil
 			o.mu.Unlock()
+			if o.logger != nil {
+				o.logger.Info("turnrelay: no incoming exit traffic; rebuilding the session")
+			}
 			oldPool.Close()
 			_ = oldClient.Close()
-			lastReply = time.Time{}
+			o.mu.Lock()
+			if ctx.Err() != nil || o.closed {
+				o.mu.Unlock()
+				return
+			}
+			o.startSession(ctx)
+			o.mu.Unlock()
+			received, lastPacket = 0, time.Time{}
+			nextRotation = time.Now().Add(2 * o.options.ZombieAfter)
 		}
 	}
 }
@@ -178,7 +190,7 @@ func (o *Outbound) watchSession(ctx context.Context) {
 func (o *Outbound) InterfaceUpdated(context.Context) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.started && !o.closed {
+	if o.pool != nil && !o.closed {
 		o.pool.Handover("interface updated")
 	}
 }

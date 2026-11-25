@@ -197,7 +197,7 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
-          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS,with_turn" ./...
+          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS,with_turn,with_turnrelay" ./...
 
   android:
     name: Android library
@@ -248,10 +248,10 @@ jobs:
           path: libbox*.aar
           retention-days: 7
 
-      - name: Verify optional TURN Android libraries
+      - name: Verify Android libraries with TURN and TurnRelay
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          go run -tags with_turn ./cmd/internal/build_libbox -target android
+          go run -tags with_turn,with_turnrelay ./cmd/internal/build_libbox -target android
           unzip -tq libbox.aar
           unzip -tq libbox-legacy.aar

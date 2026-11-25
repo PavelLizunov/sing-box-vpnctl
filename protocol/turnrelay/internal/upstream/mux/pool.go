@@ -131,6 +131,7 @@ type Pool struct {
 	active     atomic.Int32
 	connecting atomic.Int32
 	restarts   atomic.Int32
+	received   atomic.Uint64
 	errMu      sync.Mutex
 	lastErr    error
 	readyMu    sync.Mutex
@@ -160,15 +161,7 @@ func New(o Options) *Pool {
 
 func (p *Pool) Session() [16]byte { return p.session }
 
-func (p *Pool) LastProbeReply() time.Time {
-	var latest time.Time
-	for i, h := range p.health {
-		if reply := h.snapshot(i).lastAck; reply.After(latest) {
-			latest = reply
-		}
-	}
-	return latest
-}
+func (p *Pool) Received() uint64 { return p.received.Load() }
 
 func (p *Pool) Start(ctx context.Context) {
 	ctx, p.cancel = context.WithCancel(ctx)
