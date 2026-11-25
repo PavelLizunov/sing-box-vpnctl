@@ -74,18 +74,20 @@ func Listen(ctx context.Context, cfg ListenConfig) (*Instance, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	inst := &Instance{l: l, m: m, s: s, cancel: cancel}
 	inst.wg.Add(2)
+	var handlers sync.WaitGroup
 	go func() {
 		defer inst.wg.Done()
+		defer handlers.Wait()
 		for {
 			c, err := l.Accept(ctx)
 			if err != nil {
 				return
 			}
-			go func() {
+			handlers.Go(func() {
 				if err := m.Handle(ctx, c); err != nil && ctx.Err() == nil {
 					cfg.Logf("mux: allocation from %s ended: %v", c.RemoteAddr(), err)
 				}
-			}()
+			})
 		}
 	}()
 	go func() {

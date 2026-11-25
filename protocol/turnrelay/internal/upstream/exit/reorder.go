@@ -2,25 +2,14 @@ package exit
 
 import (
 	"encoding/binary"
-	"hash/fnv"
-	"io"
 	"sync"
 	"time"
 )
 
-// flowID derives a stable per-flow key from the association id and the peer
-// addresses that identify one UDP conversation, so reordering keeps distinct
-// conversations independent.
-func flowID(assoc uint16, peers ...string) uint64 {
-	h := fnv.New64a()
-	var a [2]byte
-	binary.BigEndian.PutUint16(a[:], assoc)
-	_, _ = h.Write(a[:])
-	for _, p := range peers {
-		_, _ = io.WriteString(h, p)
-		_, _ = h.Write([]byte{0})
-	}
-	return h.Sum64()
+type udpFlow struct {
+	id      uint16
+	session string
+	peer    string
 }
 
 // prependSeq/splitSeq carry the per-flow sequence in a 4-byte prefix on the
@@ -54,48 +43,52 @@ const (
 	flowIdleTimeout     = 30 * time.Second
 )
 
-// flowSequencer hands out monotonic per-flow sequence numbers on the send side.
 type flowSequencer struct {
-	mu  sync.Mutex
-	seq map[uint64]uint32
+	mu     sync.Mutex
+	seq    map[udpFlow]sendSequence
+	pruned time.Time
 }
 
-func newFlowSequencer() *flowSequencer { return &flowSequencer{seq: map[uint64]uint32{}} }
+type sendSequence struct {
+	next     uint32
+	lastSeen time.Time
+}
 
-// next returns the next sequence for flow and advances it. When too many flows
-// accumulate it drops the oldest tracking wholesale; a reset flow's receiver
-// re-anchors on the next datagram, so the only cost is a brief reorder gap.
-func (s *flowSequencer) next(flow uint64) uint32 {
+func newFlowSequencer() *flowSequencer { return &flowSequencer{seq: map[udpFlow]sendSequence{}} }
+
+func (s *flowSequencer) next(flow udpFlow) (uint32, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.seq) >= defaultMaxFlows {
-		if _, ok := s.seq[flow]; !ok {
-			s.seq = map[uint64]uint32{}
+	now := time.Now()
+	if now.Sub(s.pruned) >= flowIdleTimeout {
+		for key, seq := range s.seq {
+			if now.Sub(seq.lastSeen) >= 2*flowIdleTimeout {
+				delete(s.seq, key)
+			}
 		}
+		s.pruned = now
 	}
-	n := s.seq[flow]
-	s.seq[flow] = n + 1
-	return n
+	state, ok := s.seq[flow]
+	if !ok && len(s.seq) >= defaultMaxFlows {
+		return 0, false
+	}
+	n := state.next
+	s.seq[flow] = sendSequence{next: n + 1, lastSeen: now}
+	return n, true
 }
 
 type reorderFlow struct {
 	expected uint32
-	seeded   bool
-	gapAt    time.Time // zero: no pending gap awaiting release
+	gapAt    time.Time
 	pending  map[uint32][]byte
 	lastSeen time.Time
-}
-
-// reorderOut is one flow-tagged payload a timer-driven flush released.
-type reorderOut struct {
-	flow    uint64
-	payload []byte
+	deliver  func([]byte)
 }
 
 // reorderBuffer reorders datagrams per flow. Concurrency-safe.
 type reorderBuffer struct {
 	mu           sync.Mutex
-	flows        map[uint64]*reorderFlow
+	flows        map[udpFlow]*reorderFlow
 	releaseAfter time.Duration
 	maxPerFlow   int
 	maxFlows     int
@@ -106,7 +99,7 @@ func newReorderBuffer(releaseAfter time.Duration) *reorderBuffer {
 		releaseAfter = defaultReleaseAfter
 	}
 	return &reorderBuffer{
-		flows:        map[uint64]*reorderFlow{},
+		flows:        map[udpFlow]*reorderFlow{},
 		releaseAfter: releaseAfter,
 		maxPerFlow:   defaultMaxPerFlow,
 		maxFlows:     defaultMaxFlows,
@@ -120,7 +113,7 @@ func forwardSeq(seq, expected uint32) bool {
 
 // push ingests one datagram and returns this flow's payloads now deliverable in
 // order (possibly none, or several when a datagram fills a gap).
-func (r *reorderBuffer) push(flow uint64, seq uint32, payload []byte, now time.Time) [][]byte {
+func (r *reorderBuffer) push(flow udpFlow, seq uint32, payload []byte, now time.Time, deliver func([]byte)) [][]byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -128,11 +121,15 @@ func (r *reorderBuffer) push(flow uint64, seq uint32, payload []byte, now time.T
 	if f == nil {
 		if len(r.flows) >= r.maxFlows {
 			r.evictIdleLocked(now)
+			if len(r.flows) >= r.maxFlows {
+				return nil
+			}
 		}
-		f = &reorderFlow{expected: seq, seeded: true, pending: map[uint32][]byte{}}
+		f = &reorderFlow{expected: seq, pending: map[uint32][]byte{}}
 		r.flows[flow] = f
 	}
 	f.lastSeen = now
+	f.deliver = deliver
 
 	cp := append([]byte(nil), payload...)
 
@@ -140,7 +137,9 @@ func (r *reorderBuffer) push(flow uint64, seq uint32, payload []byte, now time.T
 		out := [][]byte{cp}
 		f.expected++
 		out = drainContiguous(f, out)
-		f.gapAt = time.Time{}
+		if len(f.pending) == 0 {
+			f.gapAt = time.Time{}
+		}
 		return out
 	}
 	if !forwardSeq(seq, f.expected) {
@@ -166,24 +165,37 @@ func (r *reorderBuffer) push(flow uint64, seq uint32, payload []byte, now time.T
 
 // flush releases gaps that have waited past releaseAfter and evicts idle flows.
 // Call it on a timer so a flow that goes quiet right after a loss still drains.
-func (r *reorderBuffer) flush(now time.Time) []reorderOut {
+func (r *reorderBuffer) flush(now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []reorderOut
-	for id, f := range r.flows {
-		for !f.gapAt.IsZero() && now.Sub(f.gapAt) >= r.releaseAfter {
-			var got [][]byte
-			got = releaseLowest(f, now, got)
-			for _, p := range got {
-				out = append(out, reorderOut{flow: id, payload: p})
-			}
-			if len(f.pending) == 0 {
-				break
+	for _, f := range r.flows {
+		if !f.gapAt.IsZero() && now.Sub(f.gapAt) >= r.releaseAfter {
+			for _, payload := range releaseLowest(f, now, nil) {
+				f.deliver(payload)
 			}
 		}
 	}
 	r.evictIdleLocked(now)
-	return out
+}
+
+func (r *reorderBuffer) remove(assoc udpFlow) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key := range r.flows {
+		if key.session == assoc.session && key.id == assoc.id {
+			delete(r.flows, key)
+		}
+	}
+}
+
+func (s *flowSequencer) remove(assoc udpFlow) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.seq {
+		if key.session == assoc.session && key.id == assoc.id {
+			delete(s.seq, key)
+		}
+	}
 }
 
 func (r *reorderBuffer) evictIdleLocked(now time.Time) {

@@ -111,7 +111,7 @@ func startExitServer(t *testing.T, mode obfs.Mode) (*net.UDPAddr, []byte) {
 	return instance.Addr().(*net.UDPAddr), obfs.CertFingerprint(cert)
 }
 
-func testOutbound(t *testing.T, turnAddr, exitAddr *net.UDPAddr, fingerprint []byte, connections int, mode string) *Outbound {
+func testOutbound(t *testing.T, turnAddr, exitAddr *net.UDPAddr, fingerprint []byte, connections int, mode string, configure ...func(*mux.Options)) *Outbound {
 	t.Helper()
 	options := Options{
 		ServerOptions:     option.ServerOptions{Server: exitAddr.IP.String(), ServerPort: uint16(exitAddr.Port)},
@@ -128,6 +128,9 @@ func testOutbound(t *testing.T, turnAddr, exitAddr *net.UDPAddr, fingerprint []b
 	created, err := NewOutbound(t.Context(), nil, log.NewNOPFactory().Logger(), "relay", options)
 	require.NoError(t, err)
 	out := created.(*Outbound)
+	for _, apply := range configure {
+		apply(&out.options)
+	}
 	scope := adapter.NewScope(t.Context(), log.NewNOPFactory().Logger())
 	require.NoError(t, out.Start(adapter.StartStateStart, scope))
 	t.Cleanup(func() {
@@ -182,7 +185,7 @@ func TestExitSurvivesRelayRestart(t *testing.T) {
 	readyCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	out.mu.Lock()
-	original := out.pool
+	original := out.current.pool
 	out.mu.Unlock()
 	require.NoError(t, original.WaitReady(readyCtx, 2))
 	peer := M.SocksaddrFromNet(startUDPEcho(t))
@@ -220,7 +223,7 @@ func TestExitSurvivesRelayRestart(t *testing.T) {
 	require.Eventually(t, func() bool {
 		out.mu.Lock()
 		defer out.mu.Unlock()
-		return out.pool != nil && out.pool.Session() != original.Session()
+		return out.current != nil && out.current.pool.Session() != original.Session()
 	}, 35*time.Second, 200*time.Millisecond)
 	require.NoError(t, previous.SetReadDeadline(time.Now().Add(time.Second)))
 	_, err = previous.Read(make([]byte, 1))
@@ -235,7 +238,7 @@ func TestExitRecoversAfterImmediateRelayRestart(t *testing.T) {
 	out := testOutbound(t, address, exitAddr, fingerprint, 2, "dtls")
 	ready, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	require.NoError(t, out.pool.WaitReady(ready, 2))
+	require.NoError(t, activePool(t, out).WaitReady(ready, 2))
 	peer := M.SocksaddrFromNet(startTCPEcho(t))
 	exchange := func() bool {
 		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
@@ -297,7 +300,7 @@ func TestExitKeepsLiveStreamWithoutProbeReplies(t *testing.T) {
 	require.NoError(t, err)
 	filter := &dropProbeEchoConn{Conn: allocation}
 	go serverMux.Handle(ctx, filter)
-	require.NoError(t, out.pool.WaitReady(ctx, 1))
+	require.NoError(t, activePool(t, out).WaitReady(ctx, 1))
 
 	conn, err := out.DialContext(ctx, "tcp", M.SocksaddrFromNet(startTCPEcho(t)))
 	require.NoError(t, err)
@@ -345,7 +348,7 @@ func TestExitOverStaticTURN(t *testing.T) {
 	out := testOutbound(t, turnAddr, exitAddr, fingerprint, 2, "srtp")
 	readyCtx, readyCancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer readyCancel()
-	require.NoError(t, out.pool.WaitReady(readyCtx, 2))
+	require.NoError(t, activePool(t, out).WaitReady(readyCtx, 2))
 
 	t.Run("tcp", func(t *testing.T) {
 		echoAddr := startTCPEcho(t)
@@ -408,7 +411,7 @@ func TestExitRejectsWrongPin(t *testing.T) {
 	out := testOutbound(t, turnAddr, exitAddr, obfs.CertFingerprint(otherCert), 1, "srtp")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	err = out.pool.WaitReady(ctx, 1)
+	err = activePool(t, out).WaitReady(ctx, 1)
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -419,7 +422,7 @@ func TestExitOverStaticTURNDTLS(t *testing.T) {
 	out := testOutbound(t, turnAddr, exitAddr, fingerprint, 1, "dtls")
 	readyCtx, readyCancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer readyCancel()
-	require.NoError(t, out.pool.WaitReady(readyCtx, 1))
+	require.NoError(t, activePool(t, out).WaitReady(readyCtx, 1))
 	echoAddr := startTCPEcho(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
@@ -434,4 +437,162 @@ func TestExitOverStaticTURNDTLS(t *testing.T) {
 	_, err = io.ReadFull(conn, buffer)
 	require.NoError(t, err)
 	require.Equal(t, payload, buffer)
+}
+
+func activePool(t *testing.T, out *Outbound) *mux.Pool {
+	t.Helper()
+	current, err := out.generation(t.Context())
+	require.NoError(t, err)
+	return current.pool
+}
+
+func TestColdStartRotatesFailedGenerations(t *testing.T) {
+	reserved, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+	turnAddr := reserved.LocalAddr().(*net.UDPAddr)
+	require.NoError(t, reserved.Close())
+	exitAddr, fingerprint := startExitServer(t, obfs.ModeSRTP)
+	out := testOutbound(t, turnAddr, exitAddr, fingerprint, 1, "srtp", func(options *mux.Options) {
+		options.ProbeInterval = 25 * time.Millisecond
+		options.ZombieAfter = 300 * time.Millisecond
+		options.HealthProbeInterval = 40 * time.Millisecond
+	})
+	original := activePool(t, out)
+	require.Eventually(t, func() bool { return original != activePool(t, out) }, 3*time.Second, 20*time.Millisecond)
+	second := activePool(t, out)
+	require.Eventually(t, func() bool { return second != activePool(t, out) }, 3*time.Second, 20*time.Millisecond)
+	listenTURN(t, turnAddr.String())
+	require.Eventually(t, func() bool { return activePool(t, out).Received() > 0 }, 5*time.Second, 20*time.Millisecond)
+	requireRelayExchange(t, out, "tcp", startTCPEcho(t))
+	requireRelayExchange(t, out, "udp", startUDPEcho(t))
+}
+
+func TestInterfaceUpdateDuringDialAndRebuild(t *testing.T) {
+	turnAddr := startTURNServer(t)
+	exitAddr, fingerprint := startExitServer(t, obfs.ModeSRTP)
+	tcpPeer, udpPeer := startTCPEcho(t), startUDPEcho(t)
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var attempts atomic.Int32
+	out := testOutbound(t, turnAddr, exitAddr, fingerprint, 1, "srtp", func(options *mux.Options) {
+		options.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if attempts.Add(1) == 1 {
+				close(entered)
+				<-ctx.Done()
+				close(canceled)
+				<-release
+				return nil, ctx.Err()
+			}
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		}
+	})
+	defer unblock()
+	original := activePool(t, out)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	for range 20 {
+		out.InterfaceUpdated(ctx)
+	}
+	select {
+	case <-canceled:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	for range 20 {
+		out.InterfaceUpdated(ctx)
+	}
+	wait, stop := context.WithTimeout(ctx, 30*time.Millisecond)
+	defer stop()
+	_, err := out.ListenPacket(wait, M.SocksaddrFromNet(udpPeer))
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	result := make(chan error, 16)
+	for range 8 {
+		go func() {
+			conn, err := out.DialContext(ctx, "tcp", M.SocksaddrFromNet(tcpPeer))
+			if conn != nil {
+				_ = conn.Close()
+			}
+			result <- err
+		}()
+		go func() {
+			conn, err := out.ListenPacket(ctx, M.SocksaddrFromNet(udpPeer))
+			if conn != nil {
+				_ = conn.Close()
+			}
+			result <- err
+		}()
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("call completed during rebuild: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	unblock()
+	for range 16 {
+		require.NoError(t, <-result)
+	}
+	require.Eventually(t, func() bool { return attempts.Load() == 3 }, 3*time.Second, 20*time.Millisecond)
+	current := activePool(t, out)
+	require.NotEqual(t, original.Session(), current.Session())
+	require.Eventually(t, func() bool { return current.Received() > 0 }, 3*time.Second, 20*time.Millisecond)
+	requireRelayExchange(t, out, "tcp", tcpPeer)
+	requireRelayExchange(t, out, "udp", udpPeer)
+}
+
+func requireRelayExchange(t *testing.T, out *Outbound, network string, target net.Addr) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	c, err := out.DialContext(ctx, network, M.SocksaddrFromNet(target))
+	require.NoError(t, err)
+	defer c.Close()
+	at, _ := ctx.Deadline()
+	require.NoError(t, c.SetDeadline(at))
+	_, err = c.Write([]byte("relay"))
+	require.NoError(t, err)
+	reply := make([]byte, 5)
+	_, err = io.ReadFull(c, reply)
+	require.NoError(t, err)
+	require.Equal(t, "relay", string(reply))
+}
+
+func TestRelayPipeDeadlineUpdates(t *testing.T) {
+	p := newRelayPipe(mux.New(mux.Options{UplinkQueue: 1}), &net.UDPAddr{})
+	defer p.Close()
+	read := make(chan error, 1)
+	go func() {
+		_, err := p.Read(make([]byte, 1))
+		read <- err
+	}()
+	require.NoError(t, p.SetReadDeadline(time.Now().Add(time.Second)))
+	select {
+	case err := <-read:
+		t.Fatalf("moving deadline failed the read: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	require.NoError(t, p.SetReadDeadline(time.Now()))
+	require.ErrorIs(t, <-read, os.ErrDeadlineExceeded)
+	_, err := p.Write([]byte{1})
+	require.NoError(t, err)
+	write := make(chan error, 1)
+	go func() {
+		_, err := p.Write([]byte{2})
+		write <- err
+	}()
+	require.NoError(t, p.SetWriteDeadline(time.Now()))
+	require.ErrorIs(t, <-write, os.ErrDeadlineExceeded)
+	require.NoError(t, p.SetWriteDeadline(time.Time{}))
+	go func() {
+		_, err := p.Write([]byte{3})
+		write <- err
+	}()
+	require.NoError(t, p.Close())
+	require.ErrorIs(t, <-write, net.ErrClosed)
 }

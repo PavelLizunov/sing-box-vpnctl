@@ -15,7 +15,7 @@ import (
 
 const (
 	Type               = "turnrelay"
-	defaultConnections = 30
+	defaultConnections = 2
 	maxConnections     = 60
 )
 

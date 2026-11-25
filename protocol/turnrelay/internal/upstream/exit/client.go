@@ -30,14 +30,15 @@ type Client struct {
 	pipe    net.PacketConn
 	server  net.Addr
 	demux   *Demux
-	udpPipe net.PacketConn // demux.UDP() wrapped in adaptive FEC (realtime flush)
+	udpPipe *fecConn       // demux.UDP() wrapped in adaptive FEC (realtime flush)
 	useq    *flowSequencer // per-flow send sequence for UDP reordering
 	reorder *reorderBuffer // per-flow receive reordering for UDP
 	o       ClientOptions
 
-	mu   sync.Mutex
-	ks   *kcp.UDPSession
-	sess *smux.Session
+	mu      sync.Mutex
+	ks      *kcp.UDPSession
+	sess    *smux.Session
+	kcpPipe *fecConn
 
 	amu    sync.Mutex
 	assocs map[uint16]*clientAssoc
@@ -45,6 +46,7 @@ type Client struct {
 
 	closed chan struct{}
 	once   sync.Once
+	wg     sync.WaitGroup
 }
 
 func NewClient(pipe net.PacketConn, server net.Addr, o ClientOptions) *Client {
@@ -58,26 +60,33 @@ func NewClient(pipe net.PacketConn, server net.Addr, o ClientOptions) *Client {
 	c.useq = newFlowSequencer()
 	c.reorder = newReorderBuffer(defaultReleaseAfter)
 	c.next = uint16(rand.Uint32())
-	go c.udpLoop()
+	c.wg.Go(c.udpLoop)
 	return c
 }
 
 func (c *Client) Close() error {
 	c.once.Do(func() {
+		c.amu.Lock()
 		close(c.closed)
+		for id, a := range c.assocs {
+			a.cancel()
+			delete(c.assocs, id)
+		}
+		c.amu.Unlock()
+		_ = c.demux.Close()
 		c.mu.Lock()
 		if c.sess != nil {
 			_ = c.sess.Close()
 		}
-		if c.ks != nil {
-			_ = c.ks.Close()
+		if c.kcpPipe != nil {
+			_ = c.kcpPipe.Close()
 		}
 		c.ks, c.sess = nil, nil
 		c.mu.Unlock()
 		if c.udpPipe != nil {
 			_ = c.udpPipe.Close()
 		}
-		_ = c.demux.Close()
+		c.wg.Wait()
 	})
 	return nil
 }
@@ -99,12 +108,14 @@ func (c *Client) session() (*smux.Session, error) {
 	}
 	if c.ks != nil {
 		_ = c.ks.Close()
-		c.ks, c.sess = nil, nil
+		_ = c.kcpPipe.Close()
+		c.ks, c.sess, c.kcpPipe = nil, nil, nil
 	}
 	// Adaptive block FEC wraps the pipe; kcp-go's own FEC is off (0,0).
 	pipe := newFECConn(c.demux.KCP(), c.demux.LossRate)
-	ks, err := kcp.NewConn3(rand.Uint32(), c.server, nil, 0, 0, pipe)
+	ks, err := kcp.NewConn4(rand.Uint32(), c.server, nil, 0, 0, true, pipe)
 	if err != nil {
+		_ = pipe.Close()
 		return nil, err
 	}
 	tuneKCP(ks)
@@ -113,7 +124,7 @@ func (c *Client) session() (*smux.Session, error) {
 		_ = ks.Close()
 		return nil, err
 	}
-	c.ks, c.sess = ks, sess
+	c.ks, c.sess, c.kcpPipe = ks, sess, pipe
 	c.o.Logf("exit: session established")
 	return sess, nil
 }
@@ -121,6 +132,9 @@ func (c *Client) session() (*smux.Session, error) {
 func (c *Client) DialContext(ctx context.Context, network string, dest M.Socksaddr) (net.Conn, error) {
 	if !strings.HasPrefix(network, "tcp") {
 		return nil, ErrNetwork
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	sess, err := c.session()
 	if err != nil {
@@ -133,7 +147,19 @@ func (c *Client) DialContext(ctx context.Context, network string, dest M.Socksad
 	if dl, ok := ctx.Deadline(); ok {
 		_ = st.SetWriteDeadline(dl)
 	}
-	if err := WriteStreamHeader(st, dest); err != nil {
+	writeDone := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(writeDone)
+		_ = st.SetWriteDeadline(time.Now())
+	})
+	err = WriteStreamHeader(st, dest)
+	if !stop() {
+		<-writeDone
+	}
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if err != nil {
 		_ = st.Close()
 		return nil, err
 	}
@@ -146,66 +172,73 @@ func (c *Client) DialContext(ctx context.Context, network string, dest M.Socksad
 func (c *Client) ListenPacket(ctx context.Context, dest M.Socksaddr) (net.PacketConn, error) {
 	c.amu.Lock()
 	defer c.amu.Unlock()
+	select {
+	case <-c.closed:
+		return nil, net.ErrClosed
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(c.assocs) == 1<<16 {
+		return nil, errors.New("exit: UDP association IDs exhausted")
+	}
 	for {
 		c.next++
 		if _, taken := c.assocs[c.next]; !taken {
 			break
 		}
 	}
-	a := &clientAssoc{c: c, id: c.next, in: make(chan packet, 256), dl: deadline.New(), done: make(chan struct{})}
+	lifetime, cancel := context.WithCancel(context.Background())
+	a := &clientAssoc{c: c, id: c.next, in: make(chan packet, 256), dl: deadline.New(), ctx: lifetime, cancel: cancel}
 	c.assocs[a.id] = a
 	return a, nil
 }
 
 func (c *Client) udpLoop() {
-	buf := make([]byte, 65535)
-	udp := c.udpPipe
-	for {
-		n, _, err := udp.ReadFrom(buf)
+	c.udpPipe.receiveUDP(c.reorder, func(seq uint32, _ net.Addr, frame []byte) {
+		id, from, payload, err := DecodeUDPFrame(frame)
 		if err != nil {
 			return
 		}
-		seq, frame, ok := splitSeq(buf[:n])
-		if !ok {
-			continue
-		}
-		id, from, payload, err := DecodeUDPFrame(frame)
-		if err != nil {
-			continue
-		}
 		c.amu.Lock()
+		defer c.amu.Unlock()
 		a := c.assocs[id]
-		c.amu.Unlock()
 		if a == nil {
-			continue
+			return
 		}
-		// Reorder per flow (assoc + reply source) before delivering, so the
-		// striped pipe's reordering does not reach the app as jitter or loss.
-		flow := flowID(id, from.String())
 		fromAddr := from.UDPAddr()
-		for _, p := range c.reorder.push(flow, seq, payload, time.Now()) {
+		deliver := func(payload []byte) {
 			select {
-			case a.in <- packet{b: p, addr: fromAddr}:
+			case <-a.ctx.Done():
+			case a.in <- packet{b: payload, addr: fromAddr}:
 			default:
 			}
 		}
-	}
+		for _, p := range c.reorder.push(udpFlow{id: id, peer: from.String()}, seq, payload, time.Now(), deliver) {
+			deliver(p)
+		}
+	})
 }
 
 type clientAssoc struct {
-	c    *Client
-	id   uint16
-	in   chan packet
-	dl   *deadline.Deadline
-	done chan struct{}
-	once sync.Once
+	c      *Client
+	id     uint16
+	in     chan packet
+	dl     *deadline.Deadline
+	ctx    context.Context
+	cancel context.CancelFunc
+	once   sync.Once
 }
 
 func (a *clientAssoc) ReadFrom(b []byte) (int, net.Addr, error) {
+	if a.ctx.Err() != nil {
+		return 0, nil, net.ErrClosed
+	}
 	select {
 	case p := <-a.in:
 		return copy(b, p.b), p.addr, nil
-	case <-a.done:
+	case <-a.ctx.Done():
 		return 0, nil, net.ErrClosed
 	case <-a.c.closed:
 		return 0, nil, net.ErrClosed
@@ -215,14 +248,29 @@ func (a *clientAssoc) ReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (a *clientAssoc) WriteTo(b []byte, addr net.Addr) (int, error) {
+	if a.ctx.Err() != nil {
+		return 0, net.ErrClosed
+	}
 	dest := M.SocksaddrFromNet(addr)
 	frame, err := EncodeUDPFrame(a.id, dest, b)
 	if err != nil {
 		return 0, err
 	}
 	// Stamp a per-flow sequence so the server can reorder this conversation.
-	seq := a.c.useq.next(flowID(a.id, dest.String()))
-	if _, err := a.c.udpPipe.WriteTo(prependSeq(seq, frame), a.c.server); err != nil {
+	a.c.amu.Lock()
+	if a.ctx.Err() != nil {
+		a.c.amu.Unlock()
+		return 0, net.ErrClosed
+	}
+	seq, ok := a.c.useq.next(udpFlow{id: a.id, peer: dest.String()})
+	a.c.amu.Unlock()
+	if !ok {
+		return 0, errUDPFlowLimit
+	}
+	if _, err := a.c.udpPipe.WriteToContext(a.ctx, prependSeq(seq, frame), a.c.server); err != nil {
+		if a.ctx.Err() != nil {
+			return 0, net.ErrClosed
+		}
 		return 0, err
 	}
 	return len(b), nil
@@ -230,10 +278,15 @@ func (a *clientAssoc) WriteTo(b []byte, addr net.Addr) (int, error) {
 
 func (a *clientAssoc) Close() error {
 	a.once.Do(func() {
-		close(a.done)
 		a.c.amu.Lock()
-		delete(a.c.assocs, a.id)
-		a.c.amu.Unlock()
+		defer a.c.amu.Unlock()
+		a.cancel()
+		if a.c.assocs[a.id] == a {
+			delete(a.c.assocs, a.id)
+			key := udpFlow{id: a.id}
+			a.c.reorder.remove(key)
+			a.c.useq.remove(key)
+		}
 	})
 	return nil
 }

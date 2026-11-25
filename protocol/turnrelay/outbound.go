@@ -38,17 +38,30 @@ func RegisterOutbound(registry *outbound.Registry) {
 type Outbound struct {
 	outbound.Adapter
 	ctx     context.Context
-	pool    *mux.Pool
 	options mux.Options
 	peer    *net.UDPAddr
 	logf    func(string, ...any)
 	logger  log.ContextLogger
 	mu      sync.Mutex
-	client  *exit.Client
+	current *sessionGeneration
+	ready   chan struct{}
+	updates chan struct{}
 	started bool
 	closed  bool
 	cancel  context.CancelFunc
 	watcher sync.WaitGroup
+}
+
+type sessionGeneration struct {
+	pool    *mux.Pool
+	client  *exit.Client
+	created time.Time
+	retired chan struct{}
+}
+
+func (g *sessionGeneration) close() {
+	_ = g.client.Close()
+	g.pool.Close()
 }
 
 func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger, tag string, options Options) (adapter.Outbound, error) {
@@ -96,6 +109,7 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
 		peer:    peer,
 		logf:    logf,
 		logger:  logger,
+		updates: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -130,117 +144,168 @@ func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		scope.Add(o.Close)
 	}
 	lifetime, o.cancel = context.WithCancel(lifetime)
-	o.startSession(lifetime)
+	current := o.startSession(lifetime)
+	o.current = current
 	o.started = true
-	o.watcher.Go(func() { o.watchSession(lifetime) })
+	o.watcher.Go(func() { o.watchSession(lifetime, current) })
 	return nil
 }
 
-func (o *Outbound) startSession(ctx context.Context) {
-	o.pool = mux.New(o.options)
-	o.pool.Start(ctx)
-	o.client = exit.NewClient(newRelayPipe(o.pool, o.peer), o.peer, exit.ClientOptions{Logf: o.logf})
+func (o *Outbound) startSession(ctx context.Context) *sessionGeneration {
+	options := o.options
+	options.OnWake = func() { o.InterfaceUpdated(ctx) }
+	pool := mux.New(options)
+	g := &sessionGeneration{
+		pool: pool, created: time.Now(), retired: make(chan struct{}),
+		client: exit.NewClient(newRelayPipe(pool, o.peer), o.peer, exit.ClientOptions{Logf: o.logf}),
+	}
+	pool.Start(ctx)
+	return g
 }
 
-func (o *Outbound) watchSession(ctx context.Context) {
+func (o *Outbound) watchSession(ctx context.Context, current *sessionGeneration) {
 	ticker := time.NewTicker(o.options.ProbeInterval)
 	defer ticker.Stop()
-	var lastPacket, nextRotation time.Time
+	defer func() {
+		o.mu.Lock()
+		o.closed = true
+		if o.current != nil {
+			close(o.current.retired)
+			o.current = nil
+		}
+		if o.ready != nil {
+			close(o.ready)
+			o.ready = nil
+		}
+		o.mu.Unlock()
+		if current != nil {
+			current.close()
+		}
+	}()
+
+	lastPacket := current.created
 	var received uint64
 	for {
+		reason := "no incoming exit traffic"
 		select {
 		case <-ctx.Done():
 			return
-		case now := <-ticker.C:
-			o.mu.Lock()
-			if o.closed {
-				o.mu.Unlock()
+		case <-o.updates:
+			reason = "interface updated"
+			timer := time.NewTimer(150 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
 				return
+			case <-timer.C:
 			}
-			if count := o.pool.Received(); count != received {
+			select {
+			case <-o.updates:
+			default:
+			}
+		case <-ticker.C:
+			now := time.Now()
+			if count := current.pool.Received(); count != received {
 				received = count
 				lastPacket = now
 			}
-			if lastPacket.IsZero() || now.Sub(lastPacket) < o.options.ZombieAfter || now.Before(nextRotation) {
-				o.mu.Unlock()
+			if now.Sub(lastPacket) < o.options.ZombieAfter {
 				continue
 			}
-			// Protocol: new workers sharing the old session ID can compete with stale workers on the exit for replies.
-			oldPool, oldClient := o.pool, o.client
-			o.pool, o.client = nil, nil
-			o.mu.Unlock()
-			if o.logger != nil {
-				o.logger.Info("turnrelay: no incoming exit traffic; rebuilding the session")
-			}
-			oldPool.Close()
-			_ = oldClient.Close()
-			o.mu.Lock()
-			if ctx.Err() != nil || o.closed {
-				o.mu.Unlock()
-				return
-			}
-			o.startSession(ctx)
-			o.mu.Unlock()
-			received, lastPacket = 0, time.Time{}
-			nextRotation = time.Now().Add(2 * o.options.ZombieAfter)
 		}
+
+		o.mu.Lock()
+		close(current.retired)
+		o.current = nil
+		o.ready = make(chan struct{})
+		o.mu.Unlock()
+		if o.logger != nil {
+			o.logger.Info("turnrelay: ", reason, "; rebuilding the session")
+		}
+		current.close()
+		current = nil
+
+		o.mu.Lock()
+		if ctx.Err() != nil || o.closed {
+			o.mu.Unlock()
+			return
+		}
+		current = o.startSession(ctx)
+		o.current = current
+		close(o.ready)
+		o.ready = nil
+		o.mu.Unlock()
+		received, lastPacket = 0, current.created
 	}
 }
 
 func (o *Outbound) InterfaceUpdated(context.Context) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.pool != nil && !o.closed {
-		o.pool.Handover("interface updated")
+	if o.started && !o.closed {
+		select {
+		case o.updates <- struct{}{}:
+		default:
+		}
 	}
 }
 
 func (o *Outbound) Close() error {
 	o.mu.Lock()
-	if o.closed {
-		o.mu.Unlock()
-		return nil
-	}
 	o.closed = true
-	pool, client := o.pool, o.client
-	o.client = nil
 	if o.cancel != nil {
 		o.cancel()
 	}
 	o.mu.Unlock()
-	if client != nil {
-		pool.Close()
-		_ = client.Close()
-	}
 	o.watcher.Wait()
 	return nil
 }
 
-func (o *Outbound) exitClient() (*exit.Client, error) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed {
-		return nil, net.ErrClosed
+func (o *Outbound) generation(ctx context.Context) (*sessionGeneration, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		o.mu.Lock()
+		current, ready, started, closed := o.current, o.ready, o.started, o.closed
+		o.mu.Unlock()
+		switch {
+		case closed:
+			return nil, net.ErrClosed
+		case !started:
+			return nil, errors.New("turnrelay: outbound is not started")
+		case current != nil:
+			return current, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ready:
+		}
 	}
-	if o.client == nil {
-		return nil, errors.New("turnrelay: outbound is not started")
-	}
-	return o.client, nil
 }
 
 func (o *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	client, err := o.exitClient()
-	if err != nil {
-		return nil, err
-	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		return client.DialContext(ctx, network, destination)
+		for {
+			current, err := o.generation(ctx)
+			if err != nil {
+				return nil, err
+			}
+			conn, err := current.client.DialContext(ctx, network, destination)
+			if !current.isRetired() {
+				return conn, err
+			}
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}
 	case N.NetworkUDP:
 		if !destination.IsIP() || destination.Port == 0 || destination.Addr.IsUnspecified() {
 			return nil, errors.New("turnrelay: udp dial requires a numeric peer IP and port")
 		}
-		packet, err := client.ListenPacket(ctx, destination)
+		packet, err := o.ListenPacket(ctx, destination)
 		if err != nil {
 			return nil, err
 		}
@@ -250,12 +315,29 @@ func (o *Outbound) DialContext(ctx context.Context, network string, destination 
 	}
 }
 
-func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	client, err := o.exitClient()
-	if err != nil {
-		return nil, err
+func (g *sessionGeneration) isRetired() bool {
+	select {
+	case <-g.retired:
+		return true
+	default:
+		return false
 	}
-	return client.ListenPacket(ctx, destination)
+}
+
+func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	for {
+		current, err := o.generation(ctx)
+		if err != nil {
+			return nil, err
+		}
+		packet, err := current.client.ListenPacket(ctx, destination)
+		if !current.isRetired() {
+			return packet, err
+		}
+		if packet != nil {
+			_ = packet.Close()
+		}
+	}
 }
 
 type connectedPacket struct {

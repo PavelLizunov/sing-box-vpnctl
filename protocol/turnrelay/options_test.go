@@ -27,7 +27,7 @@ func TestOptionsBuild(t *testing.T) {
 	options := validOptions()
 	cfg, err := options.build()
 	require.NoError(t, err)
-	require.Equal(t, 30, cfg.connections)
+	require.Equal(t, 2, cfg.connections)
 	require.True(t, cfg.udp)
 	require.Equal(t, "127.0.0.1:3478", cfg.turnServer)
 	require.Len(t, cfg.fingerprint, 32)

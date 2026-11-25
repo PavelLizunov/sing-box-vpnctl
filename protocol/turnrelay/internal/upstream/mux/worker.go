@@ -6,6 +6,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -64,6 +65,8 @@ func (w *worker) run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-w.pool.restart[w.id]:
+			backoff = 0
 		case <-time.After(jitter(backoff)):
 		}
 	}
@@ -83,7 +86,26 @@ func nextBackoff(prev time.Duration, healthy bool, minB, maxB time.Duration) tim
 // session got as far as the active state, which run uses to reset backoff.
 func (w *worker) once(ctx context.Context) (reached bool, err error) {
 	p := w.pool
-	lease, err := p.o.Creds.Acquire(ctx, w.id)
+	wctx, cancel := context.WithCancelCause(ctx)
+	handoverDone := make(chan struct{})
+	var handover bool
+	go func() {
+		defer close(handoverDone)
+		select {
+		case <-wctx.Done():
+		case <-p.restart[w.id]:
+			handover = true
+			cancel(errHandover)
+		}
+	}()
+	defer func() {
+		cancel(nil)
+		<-handoverDone
+		if handover {
+			err = errHandover
+		}
+	}()
+	lease, err := p.o.Creds.Acquire(wctx, w.id)
 	if err != nil {
 		return false, err
 	}
@@ -92,13 +114,17 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 		server = p.o.TURNOverride
 	}
 	p.connecting.Add(1)
-	alloc, err := relay.Allocate(ctx, relay.Options{
+	alloc, err := relay.Allocate(wctx, relay.Options{
 		Server: server, Username: lease.Cred.Username, Password: lease.Cred.Password,
 		UDP: p.o.TURNUDP, PeerIsIPv6: p.o.Peer.IP.To4() == nil, DialContext: p.o.DialContext,
 	})
 	if err != nil {
 		p.connecting.Add(-1)
-		p.o.Creds.Failed(lease, err)
+		if wctx.Err() == nil {
+			p.o.Creds.Failed(lease, err)
+		} else {
+			p.o.Creds.Release(lease)
+		}
 		return false, err
 	}
 	// evicted is set when the supervisor retires this worker's relay; the
@@ -113,37 +139,44 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 			p.o.Creds.Release(lease)
 		}
 	}()
-	defer alloc.Close()
-
-	wctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	go alloc.Keepalive(wctx, p.o.KeepaliveInterval)
+	var attempt sync.WaitGroup
+	var conn net.Conn
+	abortDone := make(chan struct{})
+	stopAbort := context.AfterFunc(wctx, func() {
+		defer close(abortDone)
+		_ = alloc.Close()
+	})
+	defer func() {
+		cancel(nil)
+		_ = alloc.Close()
+		if !stopAbort() {
+			<-abortDone
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		attempt.Wait()
+	}()
+	attempt.Go(func() { alloc.Keepalive(wctx, p.o.KeepaliveInterval) })
 
 	// Bound handshakes in flight: VK rate-limits bursts of new sessions.
 	select {
 	case p.handshakes <- struct{}{}:
-	case <-ctx.Done():
+	case <-wctx.Done():
 		p.connecting.Add(-1)
-		return false, ctx.Err()
+		return false, wctx.Err()
 	}
-	conn, err := p.o.Wrapper.Client(wctx, alloc.Relayed(), p.o.Peer)
+	conn, err = p.o.Wrapper.Client(wctx, alloc.Relayed(), p.o.Peer)
 	<-p.handshakes
 	p.connecting.Add(-1)
 	if err != nil {
 		return false, err
 	}
-	defer conn.Close()
 
-	// Writers to this conn get a guard each, and a watchdog judges a relay that
-	// stops taking bytes. Without it a blocked write wedges every writer behind
-	// it (the obfs conns serialise writes and ignore write deadlines), which
-	// also silences the probe loop feeding the health estimator and the zombie
-	// check, so nothing else would ever notice. The watchdog closes the conn
-	// itself: that is what unwedges the stuck write, including one in the hello
-	// below, before the worker is even active.
+	// Invariant: cancelling an attempt closes the allocation before joining its I/O.
 	errCh := make(chan error, 5)
 	var uplinkWrite, probeWrite writeGuard
-	go func() {
+	attempt.Go(func() {
 		t := time.NewTicker(writeWatchInterval)
 		defer t.Stop()
 		for {
@@ -154,13 +187,13 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 			case now := <-t.C:
 				if d, bad := stalled(now, writeStallAfter, &uplinkWrite, &probeWrite); bad {
 					p.o.Logf("mux: worker %d: relay write stuck for %v, restarting", w.id, d.Truncate(time.Millisecond))
-					_ = conn.Close()
+					cancel(errWriteStalled)
 					errCh <- errWriteStalled
 					return
 				}
 			}
 		}
-	}()
+	})
 
 	probeWrite.begin(time.Now())
 	_, helloErr := conn.Write(EncodeHello(p.session))
@@ -197,27 +230,17 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 	case <-p.evict[w.id]:
 	default:
 	}
-	// Drop a stale handover signal the same way, then watch for both: an
-	// eviction (this relay is bad) and a handover (the path is gone). The
-	// handover closes the conn, since a write onto a vanished path can block.
-	select {
-	case <-p.restart[w.id]:
-	default:
-	}
-	go func() {
+	attempt.Go(func() {
 		select {
 		case <-wctx.Done():
-			errCh <- nil
+			errCh <- context.Cause(wctx)
 		case <-p.evict[w.id]:
 			errCh <- errEvicted
-		case <-p.restart[w.id]:
-			_ = conn.Close()
-			errCh <- errHandover
 		}
-	}()
+	})
 
 	// uplink: steal from the shared queue
-	go func() {
+	attempt.Go(func() {
 		for {
 			select {
 			case <-wctx.Done():
@@ -242,10 +265,10 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				}
 			}
 		}
-	}()
+	})
 
 	// downlink: control frames consumed here, payload to the shared queue
-	go func() {
+	attempt.Go(func() {
 		buf := make([]byte, maxDatagram)
 		for {
 			n, err := conn.Read(buf)
@@ -259,7 +282,6 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				return
 			}
 			lastInbound.Store(time.Now().UnixNano())
-			p.received.Add(1)
 			if n == 0 {
 				continue
 			}
@@ -267,10 +289,12 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				// The server echoes probes; match the echo to time this
 				// worker's relay RTT and count it as a delivered probe.
 				if seq, ok := ParseProbe(buf[:n]); ok {
+					p.received.Add(1)
 					health.ackProbe(seq, time.Now())
 				}
 				continue
 			}
+			p.received.Add(1)
 			pkt := make([]byte, n)
 			copy(pkt, buf[:n])
 			select {
@@ -280,12 +304,12 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				return
 			}
 		}
-	}()
+	})
 
 	// health probes (fast: RTT/loss per relay) and keepalive/zombie (slow:
 	// hello refresh + inbound-liveness check). The server echoes probes, so
 	// each probe is a round trip the downlink loop times via health.ackProbe.
-	go func() {
+	attempt.Go(func() {
 		ht := time.NewTicker(p.o.HealthProbeInterval)
 		defer ht.Stop()
 		kt := time.NewTicker(p.o.ProbeInterval)
@@ -322,7 +346,7 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 				}
 			}
 		}
-	}()
+	})
 
 	err = <-errCh
 	if errors.Is(err, errEvicted) {
@@ -331,8 +355,6 @@ func (w *worker) once(ctx context.Context) (reached bool, err error) {
 		evicted = true
 		err = nil
 	}
-	cancel()
-	_ = conn.SetReadDeadline(time.Now())
 	if ctx.Err() != nil {
 		return reached, nil
 	}

@@ -1,6 +1,7 @@
 package exit
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"os"
@@ -17,8 +18,8 @@ import (
 // underlying conn and prepend their own discriminator.
 type Demux struct {
 	pc      net.PacketConn
-	kcp     *sideConn
-	udp     *sideConn
+	kcp     chan packet
+	udp     chan packet
 	done    chan struct{}
 	once    sync.Once
 	sendSeq atomic.Uint32  // per-datagram sequence for KCP-side frames we send
@@ -31,22 +32,28 @@ type packet struct {
 }
 
 type sideConn struct {
-	d    *Demux
-	kind byte
-	in   chan packet
-	dl   *deadline.Deadline
+	d      *Demux
+	kind   byte
+	in     chan packet
+	dl     *deadline.Deadline
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewDemux(pc net.PacketConn) *Demux {
-	d := &Demux{pc: pc, done: make(chan struct{}), est: newLossEstimator(256, 0.3)}
-	d.kcp = &sideConn{d: d, kind: KindKCP, in: make(chan packet, 1024), dl: deadline.New()}
-	d.udp = &sideConn{d: d, kind: KindUDP, in: make(chan packet, 1024), dl: deadline.New()}
+	d := &Demux{pc: pc, done: make(chan struct{}), est: newLossEstimator(256, 0.3),
+		kcp: make(chan packet, 1024), udp: make(chan packet, 1024)}
 	go d.loop()
 	return d
 }
 
-func (d *Demux) KCP() net.PacketConn { return d.kcp }
-func (d *Demux) UDP() net.PacketConn { return d.udp }
+func (d *Demux) side(kind byte, queue chan packet) *sideConn {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &sideConn{d: d, kind: kind, in: queue, dl: deadline.New(), ctx: ctx, cancel: cancel}
+}
+
+func (d *Demux) KCP() net.PacketConn { return d.side(KindKCP, d.kcp) }
+func (d *Demux) UDP() net.PacketConn { return d.side(KindUDP, d.udp) }
 
 func (d *Demux) loop() {
 	buf := make([]byte, 65535)
@@ -59,7 +66,7 @@ func (d *Demux) loop() {
 		if n < 2 {
 			continue
 		}
-		var side *sideConn
+		var side chan packet
 		var pkt []byte
 		switch buf[0] {
 		case KindKCP:
@@ -80,7 +87,7 @@ func (d *Demux) loop() {
 			continue
 		}
 		select {
-		case side.in <- packet{b: pkt, addr: addr}:
+		case side <- packet{b: pkt, addr: addr}:
 		case <-d.done:
 			return
 		default:
@@ -98,9 +105,14 @@ func (d *Demux) Close() error {
 }
 
 func (s *sideConn) ReadFrom(b []byte) (int, net.Addr, error) {
+	if s.ctx.Err() != nil {
+		return 0, nil, net.ErrClosed
+	}
 	select {
 	case p := <-s.in:
 		return copy(b, p.b), p.addr, nil
+	case <-s.ctx.Done():
+		return 0, nil, net.ErrClosed
 	case <-s.d.done:
 		return 0, nil, net.ErrClosed
 	case <-s.dl.Done():
@@ -108,7 +120,18 @@ func (s *sideConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	}
 }
 
+type contextPacketWriter interface {
+	WriteToContext(context.Context, []byte, net.Addr) (int, error)
+}
+
 func (s *sideConn) WriteTo(b []byte, addr net.Addr) (int, error) {
+	return s.WriteToContext(s.ctx, b, addr)
+}
+
+func (s *sideConn) WriteToContext(ctx context.Context, b []byte, addr net.Addr) (int, error) {
+	if s.ctx.Err() != nil {
+		return 0, net.ErrClosed
+	}
 	var out []byte
 	if s.kind == KindKCP {
 		out = make([]byte, len(b)+5)
@@ -120,7 +143,17 @@ func (s *sideConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		out[0] = s.kind
 		copy(out[1:], b)
 	}
-	if _, err := s.d.pc.WriteTo(out, addr); err != nil {
+	var err error
+	if writer, ok := s.d.pc.(contextPacketWriter); ok {
+		writeCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(s.ctx, cancel)
+		defer cancel()
+		defer stop()
+		_, err = writer.WriteToContext(writeCtx, out, addr)
+	} else {
+		_, err = s.d.pc.WriteTo(out, addr)
+	}
+	if err != nil {
 		return 0, err
 	}
 	return len(b), nil
@@ -130,7 +163,7 @@ func (s *sideConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 // [0,1], derived from gaps in the received sequence numbers.
 func (d *Demux) LossRate() float64 { return d.est.rate() }
 
-func (s *sideConn) Close() error                      { return s.d.Close() }
+func (s *sideConn) Close() error                      { s.cancel(); return nil }
 func (s *sideConn) LocalAddr() net.Addr               { return s.d.pc.LocalAddr() }
 func (s *sideConn) SetDeadline(t time.Time) error     { s.dl.Set(t); return nil }
 func (s *sideConn) SetReadDeadline(t time.Time) error { s.dl.Set(t); return nil }

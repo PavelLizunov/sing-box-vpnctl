@@ -1,6 +1,8 @@
 package exit
 
 import (
+	"context"
+	"math/rand/v2"
 	"net"
 	"os"
 	"sync"
@@ -40,6 +42,7 @@ type fecConn struct {
 	deliv chan fecDelivered
 	done  chan struct{}
 	once  sync.Once
+	wg    sync.WaitGroup
 	rdl   *deadline.Deadline
 }
 
@@ -84,9 +87,10 @@ func newFECConnFlush(inner net.PacketConn, lossFn func() float64, flush time.Dur
 		deliv:    make(chan fecDelivered, 1024),
 		done:     make(chan struct{}),
 		rdl:      deadline.New(),
+		nextB:    rand.Uint32(),
 	}
-	go c.readLoop()
-	go c.flushLoop()
+	c.wg.Go(c.readLoop)
+	c.wg.Go(c.flushLoop)
 	return c
 }
 
@@ -101,8 +105,22 @@ func (c *fecConn) parity() int {
 }
 
 func (c *fecConn) WriteTo(b []byte, addr net.Addr) (int, error) {
+	return c.WriteToContext(context.Background(), b, addr)
+}
+
+func (c *fecConn) WriteToContext(ctx context.Context, b []byte, addr net.Addr) (int, error) {
 	key := addr.String()
 	c.mu.Lock()
+	select {
+	case <-c.done:
+		c.mu.Unlock()
+		return 0, net.ErrClosed
+	default:
+	}
+	if err := ctx.Err(); err != nil {
+		c.mu.Unlock()
+		return 0, err
+	}
 	sb := c.send[key]
 	if sb == nil {
 		sb = &fecSendBlock{id: c.nextB, firstAt: time.Now()}
@@ -119,7 +137,7 @@ func (c *fecConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		frames = c.sealLocked(key)
 	}
 	c.mu.Unlock()
-	if err := c.sendFrames(frames, addr); err != nil {
+	if err := c.sendFrames(ctx, frames, addr); err != nil {
 		return 0, err
 	}
 	return len(b), nil
@@ -140,9 +158,15 @@ func (c *fecConn) sealLocked(key string) [][]byte {
 	return frames
 }
 
-func (c *fecConn) sendFrames(frames [][]byte, addr net.Addr) error {
+func (c *fecConn) sendFrames(ctx context.Context, frames [][]byte, addr net.Addr) error {
 	for _, f := range frames {
-		if _, err := c.inner.WriteTo(f, addr); err != nil {
+		var err error
+		if writer, ok := c.inner.(contextPacketWriter); ok {
+			_, err = writer.WriteToContext(ctx, f, addr)
+		} else {
+			_, err = c.inner.WriteTo(f, addr)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -178,7 +202,7 @@ func (c *fecConn) flushLoop() {
 			}
 			c.mu.Unlock()
 			for _, p := range out {
-				_ = c.sendFrames(p.frames, p.addr)
+				_ = c.sendFrames(context.Background(), p.frames, p.addr)
 			}
 		}
 	}
@@ -213,7 +237,7 @@ func (c *fecConn) readLoop() {
 	for {
 		n, addr, err := c.inner.ReadFrom(buf)
 		if err != nil {
-			c.Close()
+			c.stop()
 			return
 		}
 		frame := make([]byte, n)
@@ -244,11 +268,16 @@ func (c *fecConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	}
 }
 
-func (c *fecConn) Close() error {
+func (c *fecConn) stop() {
 	c.once.Do(func() {
 		close(c.done)
 		_ = c.inner.Close()
 	})
+}
+
+func (c *fecConn) Close() error {
+	c.stop()
+	c.wg.Wait()
 	return nil
 }
 
@@ -256,3 +285,21 @@ func (c *fecConn) LocalAddr() net.Addr               { return c.inner.LocalAddr(
 func (c *fecConn) SetDeadline(t time.Time) error     { c.rdl.Set(t); return nil }
 func (c *fecConn) SetReadDeadline(t time.Time) error { c.rdl.Set(t); return nil }
 func (c *fecConn) SetWriteDeadline(time.Time) error  { return nil }
+
+func (c *fecConn) receiveUDP(reorder *reorderBuffer, handle func(uint32, net.Addr, []byte)) {
+	ticker := time.NewTicker(reorder.releaseAfter)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.done:
+			return
+		case now := <-ticker.C:
+			reorder.flush(now)
+		case p := <-c.deliv:
+			seq, frame, ok := splitSeq(p.b)
+			if ok {
+				handle(seq, p.addr, frame)
+			}
+		}
+	}
+}

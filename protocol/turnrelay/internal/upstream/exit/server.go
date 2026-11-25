@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -19,11 +18,12 @@ import (
 var ErrPrivateDestination = errors.New("exit: destination is private, loopback or link-local")
 
 type ServerOptions struct {
-	DialTimeout  time.Duration // per destination dial, default 10s
-	MaxStreams   int           // concurrent streams per session, default 256
-	AllowPrivate bool          // serve private/loopback/link-local destinations
-	Bind         string        // optional local address for outbound sockets
-	UDPTimeout   time.Duration // idle timeout per UDP association, default 60s
+	DialTimeout     time.Duration // per destination dial, default 10s
+	MaxAssociations int
+	MaxStreams      int           // concurrent streams per session, default 256
+	AllowPrivate    bool          // serve private/loopback/link-local destinations
+	Bind            string        // optional local address for outbound sockets
+	UDPTimeout      time.Duration // idle timeout per UDP association, default 60s
 	// Resolver resolves an FQDN destination to IPs. nil uses the system
 	// resolver. It runs off the shared UDP read loop (per association), so a
 	// slow lookup stalls only its own association, never other sessions.
@@ -37,6 +37,9 @@ func (o *ServerOptions) defaults() {
 	}
 	if o.MaxStreams == 0 {
 		o.MaxStreams = 256
+	}
+	if o.MaxAssociations <= 0 {
+		o.MaxAssociations = 256
 	}
 	if o.UDPTimeout == 0 {
 		o.UDPTimeout = 60 * time.Second
@@ -55,17 +58,20 @@ func (o *ServerOptions) defaults() {
 // peer address per client session) and dials out: smux streams over KCP for
 // TCP, framed datagrams for UDP.
 type Server struct {
-	o       ServerOptions
-	demux   *Demux
-	udpPipe net.PacketConn // demux.UDP() wrapped in adaptive FEC (realtime flush)
-	useq    *flowSequencer // per-flow send sequence for UDP reordering (replies)
-	reorder *reorderBuffer // per-flow receive reordering for UDP (client->dest)
-	dialer  net.Dialer
-	lc      net.ListenConfig
-	amu     sync.Mutex
-	assocs  map[string]*assoc
-	once    sync.Once
-	closed  chan struct{}
+	o            ServerOptions
+	demux        *Demux
+	udpPipe      *fecConn       // demux.UDP() wrapped in adaptive FEC (realtime flush)
+	useq         *flowSequencer // per-flow send sequence for UDP reordering (replies)
+	reorder      *reorderBuffer // per-flow receive reordering for UDP (client->dest)
+	dialer       net.Dialer
+	lc           net.ListenConfig
+	amu          sync.Mutex
+	assocs       map[udpFlow]*assoc
+	assocCounts  map[string]int
+	pc           net.PacketConn
+	assocWorkers sync.WaitGroup
+	once         sync.Once
+	closed       chan struct{}
 }
 
 // maxAssocCache bounds the per-association resolve cache so a client naming
@@ -78,21 +84,22 @@ type udpItem struct {
 }
 
 type assoc struct {
-	peer  net.Addr
-	id    uint16
-	pc    net.PacketConn
-	last  atomic.Int64
-	out   chan udpItem              // datagrams awaiting resolve and forward
-	cache map[string]netip.AddrPort // dest.String() -> checked target; only the send goroutine touches it
-	done  chan struct{}
-	once  sync.Once
+	pc          net.PacketConn
+	last        atomic.Int64
+	out         chan udpItem              // datagrams awaiting resolve and forward
+	cache       map[string]netip.AddrPort // dest.String() -> checked target; only the send goroutine touches it
+	ctx         context.Context
+	cancel      context.CancelFunc
+	stopSession func() bool
+	once        sync.Once
 }
 
 // stop closes the association's socket and signals its goroutines to exit,
 // exactly once.
 func (a *assoc) stop() {
 	a.once.Do(func() {
-		close(a.done)
+		a.stopSession()
+		a.cancel()
 		_ = a.pc.Close()
 	})
 }
@@ -119,7 +126,7 @@ func (a *assoc) target(ctx context.Context, s *Server, dest M.Socksaddr) (netip.
 
 func NewServer(pc net.PacketConn, o ServerOptions) *Server {
 	o.defaults()
-	s := &Server{o: o, demux: NewDemux(pc), assocs: map[string]*assoc{}, closed: make(chan struct{})}
+	s := &Server{o: o, demux: NewDemux(pc), pc: pc, assocs: map[udpFlow]*assoc{}, assocCounts: map[string]int{}, closed: make(chan struct{})}
 	// FEC-protect the UDP passthrough (adaptive block FEC, short flush), the
 	// mirror of the client's udpPipe, so datagram apps get loss recovery.
 	s.udpPipe = newRealtimeFECConn(s.demux.UDP(), s.demux.LossRate)
@@ -141,35 +148,39 @@ func (s *Server) Close() error {
 		}
 		_ = s.demux.Close()
 		s.amu.Lock()
-		for _, a := range s.assocs {
-			a.stop()
+		for key, a := range s.assocs {
+			s.removeAssoc(key, a)
 		}
 		s.amu.Unlock()
+		s.assocWorkers.Wait()
 	})
 	return nil
 }
 
 // Serve blocks until ctx ends or the pipe fails.
 func (s *Server) Serve(ctx context.Context) error {
-	// Adaptive block FEC wraps the pipe; kcp-go's own FEC is off (0,0).
 	pipe := newFECConn(s.demux.KCP(), s.demux.LossRate)
+	defer pipe.Close()
 	ln, err := kcp.ServeConn(nil, 0, 0, pipe)
 	if err != nil {
 		return err
 	}
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-s.closed:
-		}
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
+	defer func() {
+		cancel()
+		stop()
 		_ = ln.Close()
-		// Stop the UDP side too: serveUDP blocks on the demux's UDP
-		// ReadFrom, which only unblocks when the demux closes. Close is
-		// sync.Once-guarded, so this is safe even if the caller also
-		// calls Server.Close directly.
 		_ = s.Close()
+		workers.Wait()
 	}()
-	go s.serveUDP(ctx)
+	workers.Go(func() { s.serveUDP(ctx) })
+	workers.Go(func() { s.reapAssocs(ctx) })
+	workers.Go(func() {
+		<-s.closed
+		_ = ln.Close()
+	})
 	for {
 		ks, err := ln.AcceptKCP()
 		if err != nil {
@@ -179,7 +190,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			return err
 		}
 		tuneKCP(ks)
-		go s.serveSession(ctx, ks)
+		workers.Go(func() { s.serveSession(ctx, ks) })
 	}
 }
 
@@ -189,7 +200,15 @@ func (s *Server) serveSession(ctx context.Context, ks *kcp.UDPSession) {
 	if err != nil {
 		return
 	}
-	defer sess.Close()
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	stop := context.AfterFunc(ctx, func() { _ = sess.Close() })
+	defer func() {
+		cancel()
+		stop()
+		_ = sess.Close()
+		workers.Wait()
+	}()
 	var streams atomic.Int32
 	var capLogged bool
 	for {
@@ -206,10 +225,10 @@ func (s *Server) serveSession(ctx context.Context, ks *kcp.UDPSession) {
 			continue
 		}
 		streams.Add(1)
-		go func() {
+		workers.Go(func() {
 			defer streams.Add(-1)
 			s.handleStream(ctx, st)
-		}()
+		})
 	}
 }
 
@@ -268,61 +287,56 @@ func isPrivate(ip netip.Addr) bool {
 // serveUDP reads UDP frames from every session and forwards them from a
 // per-(session, assoc) socket; replies go back as frames to that session.
 func (s *Server) serveUDP(ctx context.Context) {
-	udp := s.udpPipe
-	go s.reapAssocs(ctx)
-	buf := make([]byte, 65535)
-	for {
-		n, peer, err := udp.ReadFrom(buf)
+	s.udpPipe.receiveUDP(s.reorder, func(seq uint32, peer net.Addr, frame []byte) {
+		id, dest, payload, err := DecodeUDPFrame(frame)
 		if err != nil {
 			return
 		}
-		seq, frame, ok := splitSeq(buf[:n])
-		if !ok {
-			continue
-		}
-		id, dest, payload, err := DecodeUDPFrame(frame)
+		key := udpFlow{id: id, session: peer.String()}
+		s.amu.Lock()
+		defer s.amu.Unlock()
+		a, err := s.assocFor(ctx, key, peer)
 		if err != nil {
-			continue
-		}
-		a, err := s.assocFor(ctx, peer, id, udp)
-		if err != nil {
-			continue
+			return
 		}
 		a.last.Store(time.Now().UnixNano())
-		// Reorder this conversation (client session + assoc + dest) before
-		// forwarding, so the striped pipe's reordering does not reach the real
-		// destination as extra jitter. Resolve and forward run in the
-		// association's own goroutine; each in-order payload is handed over
-		// without blocking (drop under backpressure, datagram semantics).
-		flow := flowID(id, peer.String(), dest.String())
-		for _, p := range s.reorder.push(flow, seq, payload, time.Now()) {
+		deliver := func(payload []byte) {
 			select {
-			case a.out <- udpItem{dest: dest, payload: p}:
+			case <-a.ctx.Done():
+			case a.out <- udpItem{dest: dest, payload: payload}:
 			default:
 			}
 		}
-	}
+		key.peer = dest.String()
+		for _, p := range s.reorder.push(key, seq, payload, time.Now(), deliver) {
+			deliver(p)
+		}
+	})
 }
 
-func assocKey(peer net.Addr, id uint16) string {
-	return peer.String() + "/" + strconv.Itoa(int(id))
+type sessionContextSource interface {
+	SessionContext(net.Addr) (context.Context, bool)
 }
 
-func (s *Server) assocFor(ctx context.Context, peer net.Addr, id uint16, udp net.PacketConn) (*assoc, error) {
-	key := assocKey(peer, id)
-	s.amu.Lock()
-	defer s.amu.Unlock()
-	if a, ok := s.assocs[key]; ok {
-		return a, nil
-	}
-	// Do not create a new association once the server is closing: Close's
-	// one-shot stop-loop over s.assocs may already have passed, and a new
-	// association's reply goroutine would then never be told to exit. Both
-	// this check and Close's stop-loop run under s.amu, so they serialise.
+func (s *Server) assocFor(ctx context.Context, key udpFlow, peer net.Addr) (*assoc, error) {
 	select {
 	case <-s.closed:
 		return nil, net.ErrClosed
 	default:
+	}
+	if a := s.assocs[key]; a != nil {
+		return a, a.ctx.Err()
+	}
+	if s.assocCounts[key.session] >= s.o.MaxAssociations {
+		return nil, errors.New("exit: UDP association limit reached")
+	}
+	parent := ctx
+	if source, ok := s.pc.(sessionContextSource); ok {
+		var live bool
+		parent, live = source.SessionContext(peer)
+		if !live || parent.Err() != nil {
+			return nil, net.ErrClosed
+		}
 	}
 	bind := ":0"
 	if s.o.Bind != "" {
@@ -332,11 +346,21 @@ func (s *Server) assocFor(ctx context.Context, peer net.Addr, id uint16, udp net
 	if err != nil {
 		return nil, err
 	}
-	a := &assoc{peer: peer, id: id, pc: pc, out: make(chan udpItem, 256), cache: map[string]netip.AddrPort{}, done: make(chan struct{})}
+	lifetime, cancel := context.WithCancel(parent)
+	a := &assoc{pc: pc, out: make(chan udpItem, 256),
+		cache: map[string]netip.AddrPort{}, ctx: lifetime, cancel: cancel}
+	a.stopSession = context.AfterFunc(lifetime, func() {
+		s.amu.Lock()
+		defer s.amu.Unlock()
+		if s.assocs[key] == a {
+			s.removeAssoc(key, a)
+		}
+	})
 	a.last.Store(time.Now().UnixNano())
 	s.assocs[key] = a
+	s.assocCounts[key.session]++
 	// reply reader: datagrams from the outbound socket back to the client
-	go func() {
+	s.assocWorkers.Go(func() {
 		rb := make([]byte, 65535)
 		for {
 			n, from, err := pc.ReadFrom(rb)
@@ -344,27 +368,31 @@ func (s *Server) assocFor(ctx context.Context, peer net.Addr, id uint16, udp net
 				return
 			}
 			saddr := M.SocksaddrFromNet(from)
-			frame, err := EncodeUDPFrame(id, saddr, rb[:n])
+			frame, err := EncodeUDPFrame(key.id, saddr, rb[:n])
 			if err != nil {
 				continue
 			}
 			a.last.Store(time.Now().UnixNano())
 			// Stamp a per-flow sequence so the client reorders replies.
-			seq := s.useq.next(flowID(id, peer.String(), saddr.String()))
-			_, _ = udp.WriteTo(prependSeq(seq, frame), peer)
+			flow := key
+			flow.peer = saddr.String()
+			seq, ok := s.useq.next(flow)
+			if ok {
+				_, _ = s.udpPipe.WriteToContext(a.ctx, prependSeq(seq, frame), peer)
+			}
 		}
-	}()
+	})
 	// sender: resolve (off the shared read loop, with a per-association cache)
 	// and forward each queued datagram
-	go func() {
+	s.assocWorkers.Go(func() {
 		for {
 			select {
-			case <-a.done:
+			case <-a.ctx.Done():
 				return
 			case <-s.closed:
 				return
 			case it := <-a.out:
-				target, err := a.target(ctx, s, it.dest)
+				target, err := a.target(a.ctx, s, it.dest)
 				if err != nil {
 					continue
 				}
@@ -372,8 +400,18 @@ func (s *Server) assocFor(ctx context.Context, peer net.Addr, id uint16, udp net
 				_, _ = a.pc.WriteTo(it.payload, net.UDPAddrFromAddrPort(target))
 			}
 		}
-	}()
+	})
 	return a, nil
+}
+
+func (s *Server) removeAssoc(key udpFlow, a *assoc) {
+	a.stop()
+	s.reorder.remove(key)
+	delete(s.assocs, key)
+	s.assocCounts[key.session]--
+	if s.assocCounts[key.session] == 0 {
+		delete(s.assocCounts, key.session)
+	}
 }
 
 func (s *Server) reapAssocs(ctx context.Context) {
@@ -389,8 +427,7 @@ func (s *Server) reapAssocs(ctx context.Context) {
 			s.amu.Lock()
 			for key, a := range s.assocs {
 				if now.UnixNano()-a.last.Load() > int64(s.o.UDPTimeout) {
-					a.stop()
-					delete(s.assocs, key)
+					s.removeAssoc(key, a)
 				}
 			}
 			s.amu.Unlock()

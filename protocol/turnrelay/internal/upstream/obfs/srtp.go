@@ -196,6 +196,8 @@ type srtpConn struct {
 	dl     *deadline.Deadline // see demuxSide's doc comment for why this type
 	closed chan struct{}
 	once   sync.Once
+	wdMu   sync.Mutex
+	wd     time.Time
 }
 
 func newSRTPConn(d *demux, dc *dtls.Conn, isClient bool) (*srtpConn, error) {
@@ -255,6 +257,17 @@ func (c *srtpConn) Read(b []byte) (int, error) {
 func (c *srtpConn) Write(b []byte) (int, error) {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	select {
+	case <-c.closed:
+		return 0, net.ErrClosed
+	default:
+	}
+	c.wdMu.Lock()
+	wd := c.wd
+	c.wdMu.Unlock()
+	if !wd.IsZero() && !time.Now().Before(wd) {
+		return 0, os.ErrDeadlineExceeded
+	}
 	pkt := rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: srtpPayloadType, SequenceNumber: c.seq, Timestamp: c.ts, SSRC: c.ssrc}, Payload: b}
 	c.seq++
 	c.ts += uint32(len(b))
@@ -266,7 +279,12 @@ func (c *srtpConn) Write(b []byte) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := c.d.raw.WriteTo(enc, c.d.peer); err != nil {
+	if raw, ok := c.d.raw.(*listenerSocket); ok {
+		_, err = raw.writeTo(enc, c.d.peer, c.closed, wd)
+	} else {
+		_, err = c.d.raw.WriteTo(enc, c.d.peer)
+	}
+	if err != nil {
 		return 0, err
 	}
 	return len(b), nil
@@ -275,8 +293,8 @@ func (c *srtpConn) Write(b []byte) (int, error) {
 func (c *srtpConn) Close() error {
 	c.once.Do(func() {
 		close(c.closed)
-		_ = c.dc.Close()
 		c.d.Close()
+		_ = c.dc.Close()
 	})
 	return nil
 }
@@ -285,13 +303,18 @@ func (c *srtpConn) LocalAddr() net.Addr  { return c.d.raw.LocalAddr() }
 func (c *srtpConn) RemoteAddr() net.Addr { return c.d.peer }
 func (c *srtpConn) SetDeadline(t time.Time) error {
 	c.dl.Set(t)
-	return nil
+	return c.SetWriteDeadline(t)
 }
 func (c *srtpConn) SetReadDeadline(t time.Time) error {
 	c.dl.Set(t)
 	return nil
 }
-func (c *srtpConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *srtpConn) SetWriteDeadline(t time.Time) error {
+	c.wdMu.Lock()
+	c.wd = t
+	c.wdMu.Unlock()
+	return nil
+}
 
 // NewSRTPServerConn is test support, not API-stable. It builds the
 // server-side twin of srtpConn for obfstest.ListenSRTP: raw is the shared

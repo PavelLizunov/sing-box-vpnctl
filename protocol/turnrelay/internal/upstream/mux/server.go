@@ -62,6 +62,8 @@ type serverSession struct {
 	// independent atomics cannot guarantee across a preemption.
 	live     int
 	lastLive int64 // unix nanos when live last dropped to zero
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // Server is the server-side twin of Pool: it takes allocation conns (one per
@@ -75,17 +77,30 @@ type Server struct {
 	sessions map[SessionAddr]*serverSession
 	closed   chan struct{}
 	once     sync.Once
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 func NewServer(o ServerOptions) *Server {
 	o.defaults()
 	s := &Server{o: o, up: make(chan serverPacket, o.UplinkQueue), sessions: map[SessionAddr]*serverSession{}, closed: make(chan struct{})}
-	go s.reap()
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.wg.Go(s.reap)
 	return s
 }
 
 func (s *Server) Close() error {
-	s.once.Do(func() { close(s.closed) })
+	s.once.Do(func() {
+		s.mu.Lock()
+		close(s.closed)
+		s.cancel()
+		s.mu.Unlock()
+		s.wg.Wait()
+		s.mu.Lock()
+		clear(s.sessions)
+		s.mu.Unlock()
+	})
 	return nil
 }
 
@@ -95,6 +110,7 @@ func (s *Server) join(addr SessionAddr) *serverSession {
 	sess, ok := s.sessions[addr]
 	if !ok {
 		sess = &serverSession{addr: addr, down: make(chan []byte, s.o.DownlinkQueue)}
+		sess.ctx, sess.cancel = context.WithCancel(s.ctx)
 		s.sessions[addr] = sess
 		s.o.Logf("mux: session %s opened", addr)
 	}
@@ -129,6 +145,7 @@ func (s *Server) reap() {
 			s.mu.Lock()
 			for addr, sess := range s.sessions {
 				if sess.live == 0 && now.UnixNano()-sess.lastLive > int64(s.o.ZombieAfter) {
+					sess.cancel()
 					delete(s.sessions, addr)
 					s.o.Logf("mux: session %s reaped", addr)
 				}
@@ -142,9 +159,38 @@ func (s *Server) reap() {
 // hello, then an auth frame, then relays payload up and stripes downlink
 // datagrams from the session queue, echoing probes.
 func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
-	defer conn.Close()
+	s.mu.Lock()
+	if s.ctx.Err() != nil {
+		s.mu.Unlock()
+		_ = conn.Close()
+		return net.ErrClosed
+	}
+	s.wg.Add(1)
+	s.mu.Unlock()
+	defer s.wg.Done()
+
+	wctx, cancel := context.WithCancel(ctx)
+	stopServer := context.AfterFunc(s.ctx, cancel)
+	closed := make(chan struct{})
+	closeConn := context.AfterFunc(wctx, func() {
+		defer close(closed)
+		_ = conn.Close()
+	})
+	var ioWorkers sync.WaitGroup
+	defer func() {
+		stopServer()
+		cancel()
+		if closeConn() {
+			_ = conn.Close()
+		} else {
+			<-closed
+		}
+		ioWorkers.Wait()
+	}()
 	buf := make([]byte, 65535)
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
 	n, err := conn.Read(buf)
 	if err != nil {
 		return err
@@ -165,36 +211,38 @@ func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
 
 	sess := s.join(SessionAddr(session))
 	defer s.leave(sess)
-	wctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	// The uplink/downlink goroutines below only notice wctx.Done() at their
-	// channel selects, not while blocked inside conn.Read/conn.Write. Force
-	// those syscalls to return on cancel by yanking the conn's deadline, or
-	// a goroutine parked in I/O would never reach errCh and Handle would
-	// block forever, leaking the conn and both goroutines.
-	stop := context.AfterFunc(wctx, func() { _ = conn.SetDeadline(time.Now()) })
-	defer stop()
 	errCh := make(chan error, 2)
-
-	// downlink: steal from the session queue
-	go func() {
+	probes := make(chan []byte, 1)
+	write := func(pkt []byte) error {
+		if err := conn.SetWriteDeadline(time.Now().Add(min(time.Second, s.o.ZombieAfter))); err != nil {
+			return err
+		}
+		_, err := conn.Write(pkt)
+		return err
+	}
+	ioWorkers.Go(func() {
 		for {
 			select {
 			case <-wctx.Done():
-				errCh <- nil
+				errCh <- wctx.Err()
 				return
+			case pkt := <-probes:
+				if err := write(pkt); err != nil {
+					errCh <- err
+					return
+				}
 			case pkt := <-sess.down:
-				if _, err := conn.Write(pkt); err != nil {
+				if err := write(pkt); err != nil {
 					s.requeue(sess, pkt)
 					errCh <- err
 					return
 				}
 			}
 		}
-	}()
+	})
 
 	// uplink: control frames consumed here, payload to the merged queue
-	go func() {
+	ioWorkers.Go(func() {
 		rbuf := make([]byte, 65535)
 		for {
 			if err := conn.SetReadDeadline(time.Now().Add(s.o.ZombieAfter)); err != nil {
@@ -213,7 +261,10 @@ func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
 				if _, ok := ParseProbe(rbuf[:n]); ok {
 					echo := make([]byte, n)
 					copy(echo, rbuf[:n])
-					_, _ = conn.Write(echo)
+					select {
+					case probes <- echo:
+					default:
+					}
 				}
 				continue
 			}
@@ -226,11 +277,9 @@ func (s *Server) Handle(ctx context.Context, conn net.Conn) error {
 				return
 			}
 		}
-	}()
+	})
 
-	err = <-errCh
-	cancel()
-	return err
+	return <-errCh
 }
 
 // requeue hands a datagram a dying allocation could not send back to the
@@ -251,6 +300,18 @@ func (s *Server) PacketConn() net.PacketConn {
 type serverPacketConn struct {
 	s  *Server
 	dl *deadline.Deadline
+}
+
+func (p *serverPacketConn) SessionContext(addr net.Addr) (context.Context, bool) {
+	sa, ok := addr.(SessionAddr)
+	if !ok {
+		return nil, false
+	}
+	sess := p.s.lookup(sa)
+	if sess == nil {
+		return nil, false
+	}
+	return sess.ctx, true
 }
 
 func (p *serverPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {

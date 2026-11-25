@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"sync"
 	"time"
 
@@ -127,7 +128,7 @@ type Pool struct {
 	mu        sync.Mutex
 	slots     map[int]*slot
 	badRelays map[string]time.Time // relay URL -> cooldown expiry
-	fetchMu   sync.Mutex           // one fetch at a time
+	fetchSlot chan struct{}
 	lastFetch time.Time
 	captcha   time.Time
 	lastErr   error
@@ -135,7 +136,7 @@ type Pool struct {
 
 func New(f Fetcher, o Options) *Pool {
 	o.defaults()
-	return &Pool{fetch: f, o: o, slots: map[int]*slot{}, badRelays: map[string]time.Time{}}
+	return &Pool{fetch: f, o: o, slots: map[int]*slot{}, badRelays: map[string]time.Time{}, fetchSlot: make(chan struct{}, 1)}
 }
 
 func (p *Pool) linkFor(s int) string { return p.o.Links[s%len(p.o.Links)] }
@@ -231,6 +232,9 @@ func (p *Pool) Acquire(ctx context.Context, worker int) (*Lease, error) {
 	own := worker / p.o.ConnsPerSlot
 	fetched := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		p.mu.Lock()
 		ownSlot := p.slots[own]
 		if p.usable(ownSlot) {
@@ -290,19 +294,21 @@ func (p *Pool) Acquire(ctx context.Context, worker int) (*Lease, error) {
 }
 
 func (p *Pool) fetchInto(ctx context.Context, id int) error {
-	p.fetchMu.Lock()
-	defer p.fetchMu.Unlock()
+	select {
+	case p.fetchSlot <- struct{}{}:
+		defer func() { <-p.fetchSlot }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	p.mu.Lock()
 	if p.o.Now().Before(p.captcha) {
-		// A captcha landed while we waited for fetchMu; do not pile a
-		// second attempt onto it.
 		until := p.captcha
 		p.mu.Unlock()
 		return fmt.Errorf("credpool: captcha cooldown until %s: %w", until.Format(time.Kitchen), &provider.CaptchaRequiredError{})
 	}
 	for {
 		s := p.slots[id]
-		if p.usable(s) { // someone already fetched a slot we can use while we waited for fetchMu
+		if p.usable(s) {
 			p.mu.Unlock()
 			return nil
 		}
@@ -391,7 +397,10 @@ func (p *Pool) FailedRelay(l *Lease) {
 	}
 	url := l.Cred.Relay(l.Index)
 	p.mu.Lock()
-	if url != "" {
+	alternate := len(p.o.Links) > 1 || slices.ContainsFunc(l.Cred.Relays, func(relay string) bool {
+		return relay != "" && relay != url
+	})
+	if url != "" && alternate {
 		p.badRelays[url] = p.o.Now().Add(p.o.RelayCooldown)
 		p.o.Logf("credpool: relay %s cooled for %v (degraded)", url, p.o.RelayCooldown)
 	}

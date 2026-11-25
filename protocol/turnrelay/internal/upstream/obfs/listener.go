@@ -22,6 +22,7 @@ type Listener struct {
 	addr  net.Addr
 	conns chan net.Conn
 	close func()
+	done  <-chan struct{}
 	once  sync.Once
 }
 
@@ -45,6 +46,8 @@ func (l *Listener) Accept(ctx context.Context) (net.Conn, error) {
 	select {
 	case c := <-l.conns:
 		return c, nil
+	case <-l.done:
+		return nil, net.ErrClosed
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -107,6 +110,7 @@ func listenDTLS(address string, cert tls.Certificate) (*Listener, error) {
 	}
 	l := &Listener{addr: ln.Addr(), conns: make(chan net.Conn, 64)}
 	ctx, cancel := context.WithCancel(context.Background())
+	l.done = ctx.Done()
 	l.close = func() { cancel(); _ = ln.Close() }
 	go func() {
 		for {
@@ -144,8 +148,9 @@ func listenWrap(address string, cert tls.Certificate, key []byte, video bool) (*
 	}
 	l := &Listener{addr: raw.LocalAddr(), conns: make(chan net.Conn, 64)}
 	ctx, cancel := context.WithCancel(context.Background())
+	l.done = ctx.Done()
 	l.close = func() { cancel(); _ = raw.Close() }
-	go serveWrap(ctx, raw, cert, key, video, l.conns)
+	go serveWrap(ctx, newListenerSocket(raw), cert, key, video, l.conns)
 	return l, nil
 }
 
@@ -171,35 +176,35 @@ func serveWrap(ctx context.Context, raw net.PacketConn, cert tls.Certificate, ke
 
 		src := addr
 		srcKey := addr.String()
-		ps.dispatch(time.Now(), srcKey, func(_ []byte) (func([]byte), bool) {
+		ps.dispatch(time.Now(), srcKey, func(entry *srcEntry, _ []byte) (func([]byte), bool) {
 			ch := make(chan []byte, 64)
-			go acceptWrapSession(ctx, raw, src, cert, key, video, ch, out, ps, srcKey)
+			go acceptWrapSession(ctx, raw, src, cert, key, video, ch, out, ps, srcKey, entry)
 			return func(p []byte) { trySend(ch, p) }, true
 		}, pkt)
 	}
 }
 
-func acceptWrapSession(ctx context.Context, raw net.PacketConn, src net.Addr, cert tls.Certificate, key []byte, video bool, pkts chan []byte, out chan<- net.Conn, ps *perSource, srcKey string) {
+func acceptWrapSession(ctx context.Context, raw net.PacketConn, src net.Addr, cert tls.Certificate, key []byte, video bool, pkts chan []byte, out chan<- net.Conn, ps *perSource, srcKey string, entry *srcEntry) {
 	codec, err := NewWrapCodec(key, video)
 	if err != nil {
-		ps.remove(srcKey)
+		ps.remove(srcKey, entry)
 		return
 	}
 	// side delivers this source's raw packets (still WRAP-enveloped) and writes
 	// back to the shared socket; NewWrapPacketConn unwraps on read and wraps on
 	// write, and DTLS runs on top of that.
-	side := &sessionConn{ctx: ctx, raw: raw, src: src, dtlsCh: pkts, dl: deadline.New()}
+	side := &sessionConn{ctx: ctx, raw: raw, src: src, dtlsCh: pkts, dl: deadline.New(), onClose: func() { ps.remove(srcKey, entry) }}
 	pc := NewWrapPacketConn(side, codec)
 	dc, err := dtls.ServerWithOptions(pc, src, serverOptions(cert)...)
 	if err != nil {
-		ps.remove(srcKey)
+		ps.remove(srcKey, entry)
 		return
 	}
 	hctx, cancel := context.WithTimeout(ctx, dtlsHandshakeTimeout)
 	defer cancel()
 	if err := dc.HandshakeContext(hctx); err != nil {
 		_ = dc.Close()
-		ps.remove(srcKey)
+		ps.remove(srcKey, entry)
 		return
 	}
 	select {
@@ -220,9 +225,10 @@ func listenSRTP(address string, cert tls.Certificate) (*Listener, error) {
 	}
 	l := &Listener{addr: raw.LocalAddr(), conns: make(chan net.Conn, 64)}
 	ctx, cancel := context.WithCancel(context.Background())
+	l.done = ctx.Done()
 	l.close = func() { cancel(); _ = raw.Close() }
 	opts := append(serverOptions(cert), dtls.WithSRTPProtectionProfiles(dtls.SRTP_AES128_CM_HMAC_SHA1_80))
-	go serveSRTP(ctx, raw, opts, l.conns)
+	go serveSRTP(ctx, newListenerSocket(raw), opts, l.conns)
 	return l, nil
 }
 
@@ -272,16 +278,17 @@ func newPerSource(ttl time.Duration) *perSource {
 // source (via newEntry) on first sight. newEntry returns (deliver, ok); ok
 // false means the source could not be set up, and the packet is dropped. The
 // delivery closure runs outside the lock and must not block.
-func (p *perSource) dispatch(now time.Time, key string, newEntry func(pkt []byte) (func([]byte), bool), pkt []byte) {
+func (p *perSource) dispatch(now time.Time, key string, newEntry func(*srcEntry, []byte) (func([]byte), bool), pkt []byte) {
 	p.mu.Lock()
 	e, ok := p.sessions[key]
 	if !ok {
-		deliver, valid := newEntry(pkt)
+		e = &srcEntry{}
+		deliver, valid := newEntry(e, pkt)
 		if !valid {
 			p.mu.Unlock()
 			return
 		}
-		e = &srcEntry{deliver: deliver}
+		e.deliver = deliver
 		p.sessions[key] = e
 	}
 	e.lastSeen = now
@@ -293,9 +300,11 @@ func (p *perSource) dispatch(now time.Time, key string, newEntry func(pkt []byte
 // remove drops a source entry, freeing its delivery channels. A handshake that
 // fails calls this so a dead session's buffers are released at once rather than
 // lingering until the reaper's TTL.
-func (p *perSource) remove(key string) {
+func (p *perSource) remove(key string, entry *srcEntry) {
 	p.mu.Lock()
-	delete(p.sessions, key)
+	if p.sessions[key] == entry {
+		delete(p.sessions, key)
+	}
 	p.mu.Unlock()
 }
 
@@ -356,7 +365,7 @@ func serveSRTP(ctx context.Context, raw net.PacketConn, opts []dtls.ServerOption
 
 		src := addr
 		key := addr.String()
-		ps.dispatch(time.Now(), key, func(first []byte) (func([]byte), bool) {
+		ps.dispatch(time.Now(), key, func(entry *srcEntry, first []byte) (func([]byte), bool) {
 			// Only a DTLS ClientHello starts a session. A packet whose first
 			// byte is not in the DTLS content-type range (a scan, a stray
 			// datagram, a spoofed probe) must not spin up a handshake goroutine
@@ -365,7 +374,7 @@ func serveSRTP(ctx context.Context, raw net.PacketConn, opts []dtls.ServerOption
 				return nil, false
 			}
 			sess := &srtpSession{dtlsCh: make(chan []byte, 64), rtpCh: make(chan []byte, 2048)}
-			go acceptSRTPSession(ctx, raw, src, opts, sess, out, ps, key)
+			go acceptSRTPSession(ctx, raw, src, opts, sess, out, ps, key, entry)
 			return func(p []byte) {
 				switch {
 				case isDTLSByte(p[0]):
@@ -378,29 +387,32 @@ func serveSRTP(ctx context.Context, raw net.PacketConn, opts []dtls.ServerOption
 	}
 }
 
-func acceptSRTPSession(ctx context.Context, raw net.PacketConn, src net.Addr, opts []dtls.ServerOption, sess *srtpSession, out chan<- net.Conn, ps *perSource, key string) {
+func acceptSRTPSession(ctx context.Context, raw net.PacketConn, src net.Addr, opts []dtls.ServerOption, sess *srtpSession, out chan<- net.Conn, ps *perSource, key string, entry *srcEntry) {
 	side := &sessionConn{ctx: ctx, raw: raw, src: src, dtlsCh: sess.dtlsCh, dl: deadline.New()}
 	dc, err := dtls.ServerWithOptions(side, src, opts...)
 	if err != nil {
-		ps.remove(key)
+		ps.remove(key, entry)
 		return
 	}
 	hctx, cancel := context.WithTimeout(ctx, dtlsHandshakeTimeout)
 	defer cancel()
 	if err := dc.HandshakeContext(hctx); err != nil {
 		_ = dc.Close()
-		ps.remove(key)
+		ps.remove(key, entry)
 		return
 	}
-	c, err := NewSRTPServerConn(raw, src, dc, sess.rtpCh)
+	d := newDemuxFromChannels(raw, src, sess.dtlsCh, sess.rtpCh)
+	c, err := newSRTPConn(d, dc, false)
 	if err != nil {
 		_ = dc.Close()
-		ps.remove(key)
+		ps.remove(key, entry)
 		return
 	}
 	select {
-	case out <- c:
+	case out <- &sourceConn{Conn: c, remove: func() { ps.remove(key, entry) }}:
 	case <-ctx.Done():
+		_ = c.Close()
+		ps.remove(key, entry)
 	}
 }
 
@@ -414,11 +426,12 @@ func acceptSRTPSession(ctx context.Context, raw net.PacketConn, src net.Addr, op
 // why a naive version is racy against a concurrent SetReadDeadline and would
 // leave pion/dtls unable to cancel a blocked handshake read.
 type sessionConn struct {
-	ctx    context.Context
-	raw    net.PacketConn
-	src    net.Addr
-	dtlsCh chan []byte
-	dl     *deadline.Deadline
+	ctx     context.Context
+	raw     net.PacketConn
+	src     net.Addr
+	dtlsCh  chan []byte
+	dl      *deadline.Deadline
+	onClose func()
 }
 
 func (s *sessionConn) ReadFrom(b []byte) (int, net.Addr, error) {
@@ -433,12 +446,67 @@ func (s *sessionConn) ReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (s *sessionConn) WriteTo(b []byte, _ net.Addr) (int, error) { return s.raw.WriteTo(b, s.src) }
-func (s *sessionConn) Close() error                              { return nil }
-func (s *sessionConn) LocalAddr() net.Addr                       { return s.raw.LocalAddr() }
-func (s *sessionConn) SetDeadline(t time.Time) error             { return s.SetReadDeadline(t) }
-func (s *sessionConn) SetWriteDeadline(time.Time) error          { return nil }
+func (s *sessionConn) Close() error {
+	if s.onClose != nil {
+		s.onClose()
+	}
+	return nil
+}
+func (s *sessionConn) LocalAddr() net.Addr              { return s.raw.LocalAddr() }
+func (s *sessionConn) SetDeadline(t time.Time) error    { return s.SetReadDeadline(t) }
+func (s *sessionConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (s *sessionConn) SetReadDeadline(t time.Time) error {
 	s.dl.Set(t)
 	return nil
+}
+
+type sourceConn struct {
+	net.Conn
+	remove func()
+}
+
+func (c *sourceConn) Close() error {
+	err := c.Conn.Close()
+	c.remove()
+	return err
+}
+
+type listenerSocket struct {
+	net.PacketConn
+	writer chan struct{}
+}
+
+func newListenerSocket(raw net.PacketConn) *listenerSocket {
+	return &listenerSocket{PacketConn: raw, writer: make(chan struct{}, 1)}
+}
+
+func (s *listenerSocket) WriteTo(b []byte, addr net.Addr) (int, error) {
+	return s.writeTo(b, addr, nil, time.Time{})
+}
+
+func (s *listenerSocket) writeTo(b []byte, addr net.Addr, closed <-chan struct{}, limit time.Time) (int, error) {
+	deadline := time.Now().Add(time.Second)
+	if !limit.IsZero() && limit.Before(deadline) {
+		deadline = limit
+	}
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case s.writer <- struct{}{}:
+		defer func() { <-s.writer }()
+	case <-closed:
+		return 0, net.ErrClosed
+	case <-timer.C:
+		return 0, os.ErrDeadlineExceeded
+	}
+	select {
+	case <-closed:
+		return 0, net.ErrClosed
+	default:
+	}
+	if err := s.PacketConn.SetWriteDeadline(deadline); err != nil {
+		return 0, err
+	}
+	return s.PacketConn.WriteTo(b, addr)
 }

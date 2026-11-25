@@ -25,11 +25,21 @@ const (
 
 var ErrFrame = errors.New("exit: malformed frame")
 
+// Protocol: reserve 64 bytes for TURN and obfuscation, plus the exit framing.
+const maxUDPFrame = 65507 - 64 - 1 - fecHeaderLen - 2 - 4
+
+var errUDPFrameSize = errors.New("exit: UDP datagram exceeds framed size limit")
+var errUDPFlowLimit = errors.New("exit: UDP flow limit reached")
+
 // EncodeUDPFrame builds the body of a UDP datagram frame (the discriminator
 // is added by Demux): [assoc][atyp][addr][port][payload].
 func EncodeUDPFrame(assoc uint16, addr M.Socksaddr, payload []byte) ([]byte, error) {
+	headerLen := 2 + M.SocksaddrSerializer.AddrPortLen(addr)
+	if len(payload) > maxUDPFrame-headerLen {
+		return nil, errUDPFrameSize
+	}
 	var b bytes.Buffer
-	b.Grow(2 + M.SocksaddrSerializer.AddrPortLen(addr) + len(payload))
+	b.Grow(headerLen + len(payload))
 	var a [2]byte
 	binary.BigEndian.PutUint16(a[:], assoc)
 	b.Write(a[:])

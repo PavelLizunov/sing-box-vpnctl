@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pion/logging"
@@ -35,9 +36,12 @@ type Options struct {
 }
 
 type Allocation struct {
-	client  *turn.Client
-	relayed net.PacketConn
-	base    io.Closer
+	client   *turn.Client
+	relayed  net.PacketConn
+	base     io.Closer
+	server   net.Addr
+	once     sync.Once
+	closeErr error
 }
 
 // connectedUDP makes a connected UDP socket usable as net.PacketConn.
@@ -126,6 +130,21 @@ func setBuffers(c *net.UDPConn) {
 	_ = c.SetWriteBuffer(640 * 1024)
 }
 
+func resolveUDP(ctx context.Context, address string) (*net.UDPAddr, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := netip.ParseAddr(host); err != nil {
+		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		host = ips[0].String()
+	}
+	return net.ResolveUDPAddr("udp", net.JoinHostPort(host, port))
+}
+
 func Allocate(ctx context.Context, o Options) (*Allocation, error) {
 	if o.Logger == nil {
 		f := logging.NewDefaultLoggerFactory()
@@ -145,7 +164,7 @@ func Allocate(ctx context.Context, o Options) (*Allocation, error) {
 		}
 	} else {
 		var raddr *net.UDPAddr
-		raddr, err = net.ResolveUDPAddr("udp", o.Server)
+		raddr, err = resolveUDP(ctx, o.Server)
 		if err != nil {
 			return nil, fmt.Errorf("relay: resolve %s: %w", o.Server, err)
 		}
@@ -163,6 +182,8 @@ func Allocate(ctx context.Context, o Options) (*Allocation, error) {
 			turnConn, base = turn.NewSTUNConn(c), c
 		}
 	}
+	stop := context.AfterFunc(ctx, func() { _ = base.Close() })
+	defer stop()
 	family := turn.RequestedAddressFamilyIPv4
 	if o.PeerIsIPv6 {
 		family = turn.RequestedAddressFamilyIPv6
@@ -192,17 +213,27 @@ func Allocate(ctx context.Context, o Options) (*Allocation, error) {
 		_ = base.Close()
 		return nil, fmt.Errorf("relay: allocate: %w", err)
 	}
-	return &Allocation{client: client, relayed: relayed, base: base}, nil
+	server, _ := net.ResolveUDPAddr("udp", serverAddr)
+	allocation := &Allocation{client: client, relayed: relayed, base: base, server: server}
+	if !stop() || ctx.Err() != nil {
+		_ = allocation.Close()
+		return nil, ctx.Err()
+	}
+	return allocation, nil
 }
 
 func (a *Allocation) Relayed() net.PacketConn { return a.relayed }
 func (a *Allocation) RelayedAddr() net.Addr   { return a.relayed.LocalAddr() }
 
 func (a *Allocation) Close() error {
-	err := a.relayed.Close()
-	a.client.Close()
-	_ = a.base.Close()
-	return err
+	a.once.Do(func() {
+		timer := time.AfterFunc(350*time.Millisecond, func() { _ = a.base.Close() })
+		a.closeErr = a.relayed.Close()
+		timer.Stop()
+		_ = a.base.Close()
+		a.client.Close()
+	})
+	return a.closeErr
 }
 
 // Keepalive sends STUN Binding requests until ctx ends; VK relays drop
@@ -215,7 +246,10 @@ func (a *Allocation) Keepalive(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			_, _ = a.client.SendBindingRequest()
+			msg, err := stun.Build(stun.TransactionID, stun.BindingRequest)
+			if err == nil {
+				_, _ = a.client.PerformTransactionWithContext(msg, a.server, false, ctx)
+			}
 		}
 	}
 }

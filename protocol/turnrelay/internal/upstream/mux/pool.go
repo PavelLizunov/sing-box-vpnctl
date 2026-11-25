@@ -39,6 +39,7 @@ type Acquirer interface {
 const DefaultUplinkQueue = 256
 
 type Options struct {
+	OnWake        func()
 	Workers       int
 	Peer          *net.UDPAddr
 	Wrapper       obfs.Wrapper
@@ -301,7 +302,11 @@ func (p *Pool) watchWake(ctx context.Context) {
 			return
 		case now := <-t.C:
 			if det.tick(now) {
-				p.Handover("woke from sleep")
+				if p.o.OnWake != nil {
+					p.o.OnWake()
+				} else {
+					p.Handover("woke from sleep")
+				}
 			}
 		}
 	}
@@ -351,19 +356,20 @@ func (p *Pool) Write(ctx context.Context, b []byte) error {
 	}
 }
 
-// requeue puts a datagram a dying worker could not carry back on the
-// uplink queue so another worker sends it. It blocks while the queue is
-// full: the queue is the only place a datagram may wait, never the floor.
-// Only pool shutdown (ctx or Close) lets it give up.
 func (p *Pool) requeue(ctx context.Context, pkt []byte) {
+	if ctx.Err() != nil {
+		return
+	}
 	select {
 	case p.up <- pkt:
-	case <-ctx.Done():
-	case <-p.closed:
+	default:
 	}
 }
 
 func (p *Pool) Read(ctx context.Context) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	select {
 	case pkt := <-p.down:
 		return pkt, nil
