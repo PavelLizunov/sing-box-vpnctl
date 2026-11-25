@@ -57,6 +57,8 @@ CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o turnrelay-server ./cmd/turn
     -VlessOutbound .\vless-outbound.json -TurnRelayOutbound .\turnrelay-outbound.json
 ```
 
+Пропускная способность, сравнение настроек и минутные прогоны YouTube на этой же Windows-машине проверены 26 ноября. [Отчёт для продолжения работы](turnrelay-session-2026-11-26.md) · [Показания curl и видеоплеера](turnrelay-media-results.json)
+
 ## Измерения из Windows
 
 Критерий успеха — HTTPS-запрос к `www.gstatic.com/generate_204` вернул HTTP 204 с проверкой сертификата. Для сборки `v1.14.4-vpnctl-turnrelay.5` на каждом узле было по три прямые попытки и три через TurnRelay, порядок чередовался, лимит одной попытки — 12 секунд. На пути через реле источником был один и тот же выход Aruba. Поэтому для BitFolk и TRANSIP трафик действительно шёл дальше на их VLESS-серверы. [Все 18 результатов и SHA-256 сборки](turnrelay-windows-results.json)
