@@ -229,6 +229,42 @@ func TestExitSurvivesRelayRestart(t *testing.T) {
 	require.Eventually(t, echo, 40*time.Second, 300*time.Millisecond)
 }
 
+func TestExitRecoversAfterImmediateRelayRestart(t *testing.T) {
+	address, stop := listenTURN(t, "127.0.0.1:0")
+	exitAddr, fingerprint := startExitServer(t, obfs.ModeDTLS)
+	out := testOutbound(t, address, exitAddr, fingerprint, 2, "dtls")
+	ready, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	require.NoError(t, out.pool.WaitReady(ready, 2))
+	peer := M.SocksaddrFromNet(startTCPEcho(t))
+	exchange := func() bool {
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+		defer cancel()
+		conn, err := out.DialContext(ctx, "tcp", peer)
+		if err != nil {
+			return false
+		}
+		defer conn.Close()
+		deadline, _ := ctx.Deadline()
+		if err := conn.SetDeadline(deadline); err != nil {
+			return false
+		}
+		message := "after TURN restart"
+		if _, err := io.WriteString(conn, message); err != nil {
+			return false
+		}
+		reply := make([]byte, len(message))
+		_, err = io.ReadFull(conn, reply)
+		return err == nil && string(reply) == message
+	}
+	require.Eventually(t, exchange, 10*time.Second, 100*time.Millisecond)
+	stop()
+	listenTURN(t, address.String())
+	require.Eventually(t, func() bool {
+		return exchange() && exchange() && exchange()
+	}, 40*time.Second, 200*time.Millisecond)
+}
+
 type dropProbeEchoConn struct {
 	net.Conn
 	dropped atomic.Int32
@@ -261,6 +297,7 @@ func TestExitKeepsLiveStreamWithoutProbeReplies(t *testing.T) {
 	require.NoError(t, err)
 	filter := &dropProbeEchoConn{Conn: allocation}
 	go serverMux.Handle(ctx, filter)
+	require.NoError(t, out.pool.WaitReady(ctx, 1))
 
 	conn, err := out.DialContext(ctx, "tcp", M.SocksaddrFromNet(startTCPEcho(t)))
 	require.NoError(t, err)
