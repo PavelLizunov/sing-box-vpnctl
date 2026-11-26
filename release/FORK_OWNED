@@ -5,7 +5,8 @@
 # the next core update is a clean merge.
 #
 # [owned]   paths the fork added; shell-style patterns, "*" also crosses "/".
-# [derived] the embedded WireGuard, ported from its own upstream: bug fixes only.
+# [derived] vendored copies ported from their own upstream: bug fixes only.
+# TurnRelay client packages are at revision 4c3dc7ad; see protocol/turnrelay/UPSTREAM.
 # [hooks]   upstream files that carry fork lines, with the largest allowed
 #           number of added and removed lines. Do not grow a hook: put the logic
 #           into an owned file and keep the hook a one-line call.
@@ -14,12 +15,20 @@
 .github/workflows/ci.yml
 .github/workflows/release.yml
 .github/workflows/verify.yml
+.github/workflows/transport-upstreams.yml
+AGENTS.md
 ARCHITECTURE.md
+cmd/internal/build_libbox/turn.go
+cmd/internal/build_libbox/turnrelay.go
 common/trafficcontrol/vpnctl_user_bandwidth*.go
 README.md
 README.ru.md
 docs/vpnctl/*
 include/dnstt.go
+include/turn.go
+include/turn_stub.go
+include/turn_wireguard_test.go
+include/turnrelay*.go
 include/v2rayxhttp.go
 option/dnstt.go
 option/v2ray_xhttp*.go
@@ -27,6 +36,8 @@ option/vpnctl_user_bandwidth.go
 option/vpnctl_user_bandwidth_test.go
 option/wireguard_awg*.go
 protocol/dnstt/*
+protocol/turn/*
+protocol/turnrelay/*
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
 release/fork_boundary_test.py
@@ -36,12 +47,17 @@ release/v*-vpnctl.*.md
 scripts/awg_official_interop.py
 scripts/awg_official_interop_test.py
 scripts/awg_runtime_probe.py
+scripts/check_transport_upstreams.py
+scripts/check_transport_upstreams_test.py
+scripts/turn_tun_probe.py
+scripts/turnrelay_windows_probe.ps1
 transport/v2ray/registry.go
 transport/v2rayxhttp/*
 transport/wireguard/*awg*
 transport/wireguard/masque_cps_test.go
 
 [derived]
+protocol/turnrelay/internal/upstream/*
 submodules/wireguard-go/*
 
 [hooks]
@@ -51,10 +67,9 @@ option/route.go +1 -0
 cmd/internal/build_libbox/main.go +1 -1
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
-# Module pins carry grpc and the x/net v0.62.0 dependency set ahead of upstream
-# to close published vulnerabilities; drop that part when upstream catches up.
-go.mod +55 -45
-go.sum +123 -102
+# Module pins carry security fixes ahead of upstream for grpc, chi, dhcp and x/ modules.
+go.mod +74 -53
+go.sum +171 -109
 include/registry.go +1 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
@@ -63,6 +78,6 @@ release/DEFAULT_BUILD_TAGS +1 -1
 release/DEFAULT_BUILD_TAGS_OTHERS +1 -1
 release/DEFAULT_BUILD_TAGS_WINDOWS +1 -1
 transport/v2ray/transport.go +3 -15
-transport/wireguard/client_bind.go +4 -2
+transport/wireguard/client_bind.go +13 -9
 transport/wireguard/endpoint.go +10 -1
 transport/wireguard/endpoint_options.go +2 -0

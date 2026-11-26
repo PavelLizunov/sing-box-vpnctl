@@ -28,6 +28,10 @@ XHTTP:
 
 Hooks in upstream files are one or a few lines each: the option structs embed the fork options, the endpoint passes them on, the transport switch asks the registry, the Clash API adds `user`, the build tag lists gain `with_awg`, `with_xhttp` and `with_v2ray_api`.
 
+## Optional TURN and transport management
+
+The `with_turn` build registers the client in `include/turn.go` through the existing fork outbound hook. `protocol/turn` uses the core dialer and TLS configuration for its only client socket and Pion for UDP allocations. WireGuard can use it as a detour. The shared DNS, route and interface managers retain ownership of network policy. The [research and acceptance results](docs/vpnctl/transports.md) track the reviewed revisions and the management contracts with VPNRouter and vpnctl.
+
 ## Rules for the fork's own code
 
 - Go files of the layer carry no comments, except a single line above a statement that starts with `Invariant:`, `Race:`, `Quirk:` or `Protocol:` and states a reason the code cannot show. CI rejects other new comments (`release/hygiene/`).

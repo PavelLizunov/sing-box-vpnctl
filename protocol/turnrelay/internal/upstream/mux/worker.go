@@ -1,0 +1,369 @@
+package mux
+
+import (
+	"context"
+	"errors"
+	"io"
+	"math/rand/v2"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/sagernet/sing-box/protocol/turnrelay/internal/upstream/relay"
+)
+
+// errEvicted is the sentinel a worker's evict watcher pushes when the
+// supervisor retires its relay. once() maps it to a deliberate teardown.
+var errEvicted = errors.New("mux: worker evicted by supervisor")
+
+// errWriteStalled is what the write watchdog reports when a relay stopped
+// taking bytes: the session is torn down so the blocked write unwinds and the
+// worker reconnects, instead of sitting "active" and carrying nothing.
+var errWriteStalled = errors.New("mux: relay stopped accepting writes")
+
+// errHandover is what the handover watcher reports when the path under the
+// pool changed. The relay is not at fault, so the session is simply rebuilt on
+// the new path without cooling the relay or climbing the backoff ladder.
+var errHandover = errors.New("mux: path changed, re-establishing")
+
+type worker struct {
+	id   int
+	pool *Pool
+}
+
+// run keeps one allocation alive for the lifetime of ctx, restarting it
+// with backoff after any failure. The backoff ladder resets once a session
+// was healthy (it reached the active state, or simply outlived BackoffMax),
+// so one outage does not tax every later reconnect with the maximum wait.
+func (w *worker) run(ctx context.Context) {
+	var backoff time.Duration
+	for {
+		start := time.Now()
+		reached, err := w.once(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		w.pool.restarts.Add(1)
+		if errors.Is(err, errHandover) {
+			// The path changed under us: rebuild at once, only spread across
+			// the pool so the relay does not see one burst.
+			backoff = 0
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(jitter(handoverBackoff)):
+			}
+			continue
+		}
+		healthy := reached || time.Since(start) > w.pool.o.BackoffMax
+		backoff = nextBackoff(backoff, healthy, w.pool.o.BackoffMin, w.pool.o.BackoffMax)
+		if err != nil {
+			w.pool.setErr(err)
+			w.pool.o.Logf("mux: worker %d: %v; retry in %v", w.id, err, backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.pool.restart[w.id]:
+			backoff = 0
+		case <-time.After(jitter(backoff)):
+		}
+	}
+}
+
+// nextBackoff returns the delay before the next attempt given the previous
+// one. A healthy session (or the very first failure, prev == 0) starts the
+// ladder over at minB; otherwise the delay doubles up to maxB.
+func nextBackoff(prev time.Duration, healthy bool, minB, maxB time.Duration) time.Duration {
+	if healthy || prev <= 0 {
+		return minB
+	}
+	return min(prev*2, maxB)
+}
+
+// once runs one allocation to completion. reached reports whether the
+// session got as far as the active state, which run uses to reset backoff.
+func (w *worker) once(ctx context.Context) (reached bool, err error) {
+	p := w.pool
+	wctx, cancel := context.WithCancelCause(ctx)
+	handoverDone := make(chan struct{})
+	var handover bool
+	go func() {
+		defer close(handoverDone)
+		select {
+		case <-wctx.Done():
+		case <-p.restart[w.id]:
+			handover = true
+			cancel(errHandover)
+		}
+	}()
+	defer func() {
+		cancel(nil)
+		<-handoverDone
+		if handover {
+			err = errHandover
+		}
+	}()
+	lease, err := p.o.Creds.Acquire(wctx, w.id)
+	if err != nil {
+		return false, err
+	}
+	server := lease.Cred.Relay(lease.Index)
+	if p.o.TURNOverride != "" {
+		server = p.o.TURNOverride
+	}
+	p.connecting.Add(1)
+	alloc, err := relay.Allocate(wctx, relay.Options{
+		Server: server, Username: lease.Cred.Username, Password: lease.Cred.Password,
+		UDP: p.o.TURNUDP, PeerIsIPv6: p.o.Peer.IP.To4() == nil, DialContext: p.o.DialContext,
+	})
+	if err != nil {
+		p.connecting.Add(-1)
+		if wctx.Err() == nil {
+			p.o.Creds.Failed(lease, err)
+		} else {
+			p.o.Creds.Release(lease)
+		}
+		return false, err
+	}
+	// evicted is set when the supervisor retires this worker's relay; the
+	// cleanup then cools that relay (FailedRelay) instead of a plain Release,
+	// so the next Acquire hands a different one. Any pre-active failure leaves
+	// evicted false and releases normally.
+	evicted := false
+	defer func() {
+		if evicted {
+			p.o.Creds.FailedRelay(lease)
+		} else {
+			p.o.Creds.Release(lease)
+		}
+	}()
+	var attempt sync.WaitGroup
+	var conn net.Conn
+	abortDone := make(chan struct{})
+	stopAbort := context.AfterFunc(wctx, func() {
+		defer close(abortDone)
+		_ = alloc.Close()
+	})
+	defer func() {
+		cancel(nil)
+		_ = alloc.Close()
+		if !stopAbort() {
+			<-abortDone
+		}
+		if conn != nil {
+			_ = conn.Close()
+		}
+		attempt.Wait()
+	}()
+	attempt.Go(func() { alloc.Keepalive(wctx, p.o.KeepaliveInterval) })
+
+	// Bound handshakes in flight: VK rate-limits bursts of new sessions.
+	select {
+	case p.handshakes <- struct{}{}:
+	case <-wctx.Done():
+		p.connecting.Add(-1)
+		return false, wctx.Err()
+	}
+	conn, err = p.o.Wrapper.Client(wctx, alloc.Relayed(), p.o.Peer)
+	<-p.handshakes
+	p.connecting.Add(-1)
+	if err != nil {
+		return false, err
+	}
+
+	// Invariant: cancelling an attempt closes the allocation before joining its I/O.
+	errCh := make(chan error, 5)
+	var uplinkWrite, probeWrite writeGuard
+	attempt.Go(func() {
+		t := time.NewTicker(writeWatchInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-wctx.Done():
+				errCh <- nil
+				return
+			case now := <-t.C:
+				if d, bad := stalled(now, writeStallAfter, &uplinkWrite, &probeWrite); bad {
+					p.o.Logf("mux: worker %d: relay write stuck for %v, restarting", w.id, d.Truncate(time.Millisecond))
+					cancel(errWriteStalled)
+					errCh <- errWriteStalled
+					return
+				}
+			}
+		}
+	})
+
+	probeWrite.begin(time.Now())
+	_, helloErr := conn.Write(EncodeHello(p.session))
+	probeWrite.end()
+	if helloErr != nil {
+		return false, helloErr
+	}
+	if p.authTag != nil {
+		probeWrite.begin(time.Now())
+		_, authErr := conn.Write(EncodeAuth(p.authTag))
+		probeWrite.end()
+		if authErr != nil {
+			return false, authErr
+		}
+	}
+	reached = true
+	p.active.Add(1)
+	p.broadcastReady()
+	defer p.active.Add(-1)
+	// Fresh relay, fresh health: clear the previous session's RTT/loss so the
+	// new relay is judged on its own behaviour.
+	health := p.health[w.id]
+	health.reset()
+	health.setActive(true)
+	defer health.setActive(false)
+	p.o.Logf("mux: worker %d up via %s relayed %s", w.id, server, alloc.RelayedAddr())
+
+	var lastInbound atomic.Int64
+	lastInbound.Store(time.Now().UnixNano())
+
+	// Drop any eviction signal left over from a previous session, then watch
+	// for a fresh one from the supervisor.
+	select {
+	case <-p.evict[w.id]:
+	default:
+	}
+	attempt.Go(func() {
+		select {
+		case <-wctx.Done():
+			errCh <- context.Cause(wctx)
+		case <-p.evict[w.id]:
+			errCh <- errEvicted
+		}
+	})
+
+	// uplink: steal from the shared queue
+	attempt.Go(func() {
+		for {
+			select {
+			case <-wctx.Done():
+				errCh <- nil
+				return
+			case pkt := <-p.up:
+				// Teardown raced the steal: this conn is dead or dying and a
+				// write could "succeed" into a gone allocation. Hand the
+				// packet back for a live worker instead.
+				if wctx.Err() != nil {
+					p.requeue(ctx, pkt)
+					errCh <- nil
+					return
+				}
+				uplinkWrite.begin(time.Now())
+				_, err := conn.Write(pkt)
+				uplinkWrite.end()
+				if err != nil {
+					p.requeue(ctx, pkt)
+					errCh <- err
+					return
+				}
+			}
+		}
+	})
+
+	// downlink: control frames consumed here, payload to the shared queue
+	attempt.Go(func() {
+		buf := make([]byte, maxDatagram)
+		for {
+			n, err := conn.Read(buf)
+			if err != nil {
+				// An oversize record truncates against the buffer on some
+				// conns; drop it rather than tearing the worker down.
+				if errors.Is(err, io.ErrShortBuffer) {
+					continue
+				}
+				errCh <- err
+				return
+			}
+			lastInbound.Store(time.Now().UnixNano())
+			if n == 0 {
+				continue
+			}
+			if IsControl(buf[:n]) {
+				// The server echoes probes; match the echo to time this
+				// worker's relay RTT and count it as a delivered probe.
+				if seq, ok := ParseProbe(buf[:n]); ok {
+					p.received.Add(1)
+					health.ackProbe(seq, time.Now())
+				}
+				continue
+			}
+			p.received.Add(1)
+			pkt := make([]byte, n)
+			copy(pkt, buf[:n])
+			select {
+			case p.down <- pkt:
+			case <-wctx.Done():
+				errCh <- nil
+				return
+			}
+		}
+	})
+
+	// health probes (fast: RTT/loss per relay) and keepalive/zombie (slow:
+	// hello refresh + inbound-liveness check). The server echoes probes, so
+	// each probe is a round trip the downlink loop times via health.ackProbe.
+	attempt.Go(func() {
+		ht := time.NewTicker(p.o.HealthProbeInterval)
+		defer ht.Stop()
+		kt := time.NewTicker(p.o.ProbeInterval)
+		defer kt.Stop()
+		var seq uint64
+		for {
+			select {
+			case <-wctx.Done():
+				errCh <- nil
+				return
+			case <-ht.C:
+				seq++
+				now := time.Now()
+				health.sentProbe(seq, now)
+				health.tick(now) // sweep older unanswered probes into loss
+				probeWrite.begin(now)
+				_, err := conn.Write(EncodeProbe(seq))
+				probeWrite.end()
+				if err != nil {
+					errCh <- err
+					return
+				}
+			case <-kt.C:
+				probeWrite.begin(time.Now())
+				_, err := conn.Write(EncodeHello(p.session))
+				probeWrite.end()
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if time.Since(time.Unix(0, lastInbound.Load())) > p.o.ZombieAfter {
+					errCh <- errors.New("no inbound traffic, assuming zombie allocation")
+					return
+				}
+			}
+		}
+	})
+
+	err = <-errCh
+	if errors.Is(err, errEvicted) {
+		// Deliberate retire: the deferred cleanup cools the relay, and run
+		// treats a nil error as a healthy session so it re-acquires promptly.
+		evicted = true
+		err = nil
+	}
+	if ctx.Err() != nil {
+		return reached, nil
+	}
+	if err == nil {
+		err = net.ErrClosed
+	}
+	return reached, err
+}
+
+func jitter(d time.Duration) time.Duration {
+	return d/2 + time.Duration(rand.Int64N(int64(d)))
+}

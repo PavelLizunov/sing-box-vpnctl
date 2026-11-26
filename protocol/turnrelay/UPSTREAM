@@ -1,0 +1,38 @@
+Upstream: github.com/romanrublev/turnrelay
+Revision: 4c3dc7ad19f564bf6a1e82ab53038cb85a835420 (2026-10-10). The v0.7.0-beta tag points to 06f8b98f8648852f3638b12067bc6e95a06444ac.
+License: GPL-3.0; see NOTICE and the repository LICENSE.
+
+Copied under internal/upstream at the revision above:
+  relay, mux, obfs, credpool, provider, provider/static, exit.
+
+Patched files:
+  credpool/pool.go
+  exit/client.go
+  exit/demux.go
+  exit/fecconn.go
+  exit/frame.go
+  exit/listen.go
+  exit/reorder.go
+  exit/server.go
+  mux/pool.go
+  mux/server.go
+  mux/worker.go
+  obfs/listener.go
+  obfs/srtp.go
+  provider/static/static.go
+  relay/relay.go
+
+The integration rewrites local imports to the sing-box module. The paired
+server build restores the upstream import prefix and pins pion/turn v5.1.3.
+See docs/vpnctl/turnrelay.md for the build command.
+
+The relay uses the sing-box dialer, which applies DNS, detour and bind options.
+The mux cancels allocation attempts and starts a new outbound generation on
+path changes or prolonged silence. The exit owns its allocation handlers,
+cleans up idle UDP associations, and flushes UDP reorder gaps on a timer.
+Each client KCP connection closes its own FEC reader while UDP stays active.
+
+Fork regression tests are named vpnctl_regression_test.go. The adapter exposes
+static credentials in exit mode and requires an exit certificate pin for DTLS
+and SRTP. The upstream VK provider, app, tray, commands and sing-box adapter
+are outside the vendored subset.

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -30,7 +31,7 @@ type ClientBind struct {
 	reservedAccess      sync.RWMutex
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
-	conn                *wireConn
+	conn                atomic.Pointer[wireConn]
 	done                chan struct{}
 	isConnect           bool
 	connectAddr         netip.AddrPort
@@ -52,7 +53,7 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 }
 
 func (c *ClientBind) connect() (*wireConn, error) {
-	serverConn := c.conn
+	serverConn := c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -68,7 +69,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		return nil, net.ErrClosed
 	default:
 	}
-	serverConn = c.conn
+	serverConn = c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -82,7 +83,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
@@ -91,12 +92,13 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		if err != nil {
 			return nil, err
 		}
-		c.conn = &wireConn{
+		serverConn = &wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
 		}
 	}
-	return c.conn, nil
+	c.conn.Store(serverConn)
+	return serverConn, nil
 }
 
 func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
@@ -158,7 +160,7 @@ func (c *ClientBind) Close() error {
 	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
-	common.Close(common.PtrOrNil(c.conn))
+	common.Close(common.PtrOrNil(c.conn.Swap(nil)))
 	return nil
 }
 

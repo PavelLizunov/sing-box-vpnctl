@@ -81,6 +81,7 @@
 
 Страницы руководств на английском.
 
+- [Экспериментальный TURN, исследование транспортов и план развития](docs/vpnctl/transports.md)
 - [Параметры AmneziaWG](docs/vpnctl/awg.md)
 - [Параметры XHTTP](docs/vpnctl/xhttp.md)
 - [Рецепты DNS](docs/vpnctl/dns.md)

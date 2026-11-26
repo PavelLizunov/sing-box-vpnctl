@@ -1,0 +1,234 @@
+{
+  "discover_organizations": ["hiddify"],
+  "repositories": [
+    {
+      "repo": "SagerNet/sing-box",
+      "refs": {"HEAD": "b3f845963897f14156609a22c24092221b01558c", "stable": "b1daa1ce0652a4c19e4fd7d00f451cf5761a9a18"},
+      "release": "v1.14.4",
+      "issues": {"4534": "2026-09-15T06:43:09Z"},
+      "paths": ["include/*", "option/*", "protocol/*", "transport/*", "adapter/*", "route/*", "dns/*", "go.mod"]
+    },
+    {
+      "repo": "hiddify/hiddify-sing-box",
+      "refs": {"HEAD": "4891a0c68ef27353dfaab3a35832239e60176e7f", "main": "17127b0535dfcd2b35b732ed9cd0768518c78a54"},
+      "release": "v1.13.0.h5",
+      "paths": ["h_*.go", "include/*", "option/*", "protocol/*", "transport/*", "adapter/*", "route/*", "dns/*", "go.mod"]
+    },
+    {
+      "repo": "hiddify/hiddify-core",
+      "refs": {"HEAD": "4e5a9a357003d0a995360586702fd24c53042e3f"},
+      "release": "v5.9.15",
+      "paths": ["extension/*", "platform/*", "v2/*", "hiddify-sing-box", "ray2sing", "go.mod"]
+    },
+    {
+      "repo": "hiddify/hiddify-app",
+      "refs": {"HEAD": "66c17f83a55233ef4a1c80a4606df811227cc210"},
+      "release": "v5.9.15",
+      "paths": ["hiddify-core", "lib/*", "android/*", "linux/*", "pubspec.yaml"]
+    },
+    {
+      "repo": "hiddify/ray2sing",
+      "refs": {"HEAD": "a722bf1b184d7fcf10248dee45fc099d62646ca8"},
+      "release": null,
+      "paths": ["ray2sing/*", "go.mod"]
+    },
+    {
+      "repo": "hiddify/sing-tun",
+      "refs": {"HEAD": "fe80f0918269863a13628e53e4557b038882504f"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "hiddify/hiddify.com",
+      "refs": {"HEAD": "18d5174c13a8a534d2d859503a9a25733460a1ba"},
+      "release": null,
+      "paths": ["docs/core/features/*"]
+    },
+    {
+      "repo": "romanrublev/turnrelay",
+      "refs": {"HEAD": "4c3dc7ad19f564bf6a1e82ab53038cb85a835420"},
+      "release": "v0.7.0-beta",
+      "paths": ["singbox/*", "relay/*", "provider/*", "credpool/*", "obfs/*", "mux/*", "exit/*", "go.mod"]
+    },
+    {
+      "repo": "pion/turn",
+      "refs": {"HEAD": "7bffbda6e8137fbfe15e239f8c3655ec4024d562", "v5.1.3": "f00fda475f1eb3eaa20daac3cd1c0f6a101b9db8"},
+      "release": "v6.0.0-rc.1",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "shtorm-7/sing-box-extended",
+      "refs": {"HEAD": "d9442d14b19ddd02605bf3ee893a171947038e19"},
+      "release": "v1.14.3-extended-2.7.3",
+      "paths": ["include/*", "option/*", "protocol/*", "transport/*", "go.mod"]
+    },
+    {
+      "repo": "Shtorm-glitch/sing-box-extended",
+      "refs": {"HEAD": "6d147499e1605a7e70e0e7317cedecd78627e82f"},
+      "release": null,
+      "paths": ["include/*", "protocol/olcrtc/*", "transport/*", "go.mod"]
+    },
+    {
+      "repo": "gr33nimax/hydracore",
+      "refs": {"HEAD": "8f40627aa38bc797610fa886450ffdace5b1edeb"},
+      "release": "hydracore-sbe-1.14.3-stable-1",
+      "paths": ["include/*", "protocol/*", "transport/*", "release/UPSTREAM_BASELINE", "go.mod"]
+    },
+    {
+      "repo": "p1neappleXpress/OpenFlux",
+      "refs": {"HEAD": "edcf77a1848a72370cfba9f346d3b897b61e7e7d", "nightly": "f492a1a33b7581ad8f88118f97e0b866adda3cdc"},
+      "release": "v0.17.1",
+      "paths": ["transport/*", "tunnel/*", "main.go", "go.mod"]
+    },
+    {
+      "repo": "ghostlane-project/olcrtc",
+      "refs": {"HEAD": "2a5153529b0496fe8b42929c56f8cb2e7d36c917"},
+      "release": "v0.15.1",
+      "paths": ["pkg/olcrtc/*", "internal/engine/*", "internal/crypto/*", "go.mod"]
+    },
+    {
+      "repo": "ghostlane-project/ghostlane",
+      "refs": {"HEAD": "6becdcdcec89632e3e2744ca8e7f4911265e5bec"},
+      "release": "v1.0.472",
+      "paths": ["cli/*", "sharedUI/*/SmartConnect.kt", "THIRD_PARTY_NOTICES.md"]
+    },
+    {
+      "repo": "kulikov0/whitelist-bypass",
+      "refs": {"HEAD": "d1c48c06c0abe64ce30f404cddd54989edddaa70"},
+      "release": "v0.5.2",
+      "paths": ["headless/*", "relay/*", "go.mod"]
+    },
+    {
+      "repo": "getlantern/soar",
+      "refs": {"HEAD": "007179d4b40bd589d2b0240abffae33c43899839"},
+      "release": "v0.2.5",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "masterking32/MasterDnsVPN",
+      "refs": {"HEAD": "7198b45b86c7def2e226e41bcca3eca8ca2ea502"},
+      "release": "v2026.11.18.210322-7198b45",
+      "paths": ["internal/*", "cmd/*", "go.mod"]
+    },
+    {
+      "repo": "bnkrr/cf-socks",
+      "refs": {"HEAD": "b0c034447a12e41ce38df09301e0747295953770"},
+      "release": "v0.7.0",
+      "paths": ["sdk/go/*", "worker/src/*", "go.mod", "package.json", "LICENSE*"]
+    },
+    {
+      "repo": "fiddyschmitt/File-Tunnel",
+      "refs": {"HEAD": "8bc2563de9c6b76a81e2ee3e26042ae6cfbc27e8"},
+      "release": "v3.5.8",
+      "paths": ["ft/IO/*", "ft/ft.csproj"]
+    },
+    {
+      "repo": "getlantern/flashlight",
+      "refs": {"HEAD": "70d2707680a1e66d28bd59df412a75e51a4c9247"},
+      "release": "v7.6.243",
+      "paths": ["chained/*", "go.mod"]
+    },
+    {
+      "repo": "SagerNet/sing-tun",
+      "refs": {"HEAD": "2e93ae4ab5ab5f838a7a6014d1082edebda4f5cf"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "SUDOKU-ASCII/sudoku",
+      "refs": {"HEAD": "b1d1f0e767653d2c70e2ff814a01264c7dedf1f4"},
+      "release": "v0.5.2-1",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "enfein/mieru",
+      "refs": {"HEAD": "9812207bb8aefc3dd4dcc6a5ce268bf5e28b6c54"},
+      "release": "v3.40.0",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "TrustTunnel/TrustTunnel",
+      "refs": {"HEAD": "113cdc89559b9d2698e1477b3d0af89e95c0b7cf"},
+      "release": "v1.3.1",
+      "paths": ["*.rs", "Cargo.toml", "Cargo.lock"]
+    },
+    {
+      "repo": "Psiphon-Labs/psiphon-tunnel-core",
+      "refs": {"HEAD": "5dccaa36ae176ba974bcebc2124f172ecec51b08"},
+      "release": "v2.0.43",
+      "paths": ["psiphon/*", "go.mod"]
+    },
+    {
+      "repo": "CluvexStudio/psiphon-tunnel-core",
+      "refs": {"HEAD": "2956a96b56fe09b99e72a8eb4bed3e79d29e3543"},
+      "release": null,
+      "paths": ["psiphon/*", "go.mod"]
+    },
+    {
+      "repo": "amnezia-vpn/amneziawg-go",
+      "refs": {"HEAD": "08fe3d33bbb116be09a6183d02609311b8b0c9e8"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "hiddify/amneziawg-go",
+      "refs": {"HEAD": "b5928efb6ca19f0153958460c3d141f04abc5c2e", "v5": "a2ae165a1b3f062ce9dd3dc3353ebd1c591847a5"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "hiddify/MasterDnsVPN",
+      "refs": {"HEAD": "cfb18fab25ac4ddc682e433f0edf1524813a94ab", "hiddify": "a6b693698ee8246ca415a994bb6da40d66dddba7"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "hiddify/soar",
+      "refs": {"HEAD": "fea80aae6c60a9f27d7358e5f967cbc9b57bb37d", "hiddify": "e18587bc9fb62f326124d1f3eb0ceb31708bd077"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "Kianmhz/GooseRelayVPN",
+      "refs": {"HEAD": "0ed803f635890cbc021f71d7c8746ca1d2f262b1"},
+      "release": "v1.7.1",
+      "paths": ["*.py", "*.go", "go.mod", "requirements*.txt"]
+    },
+    {
+      "repo": "hiddify/GooseRelayVPN",
+      "refs": {"HEAD": "0e68c2a3ae4c13088d8d8aba6ba279910924e96f"},
+      "release": null,
+      "paths": ["*.py", "*.go", "go.mod", "requirements*.txt"]
+    },
+    {
+      "repo": "net2share/vaydns",
+      "refs": {"HEAD": "a0ff70110d5e96686ab8f4c8e1c44cd09be07a75"},
+      "release": "v0.2.8",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "hiddify/vaydns",
+      "refs": {"HEAD": "75d556afd23a8f4cf93392f4a8e218aac1fa3ff0"},
+      "release": "v0.3.0",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "xchacha20-poly1305/sing-trusttunnel",
+      "refs": {"HEAD": "27f689c5105a7f20bc64d5865c49f481cb8ca68c"},
+      "release": "v0.3.2",
+      "paths": ["*.go", "go.mod"]
+    },
+    {
+      "repo": "XTLS/Xray-core",
+      "refs": {"HEAD": "b56ffef338c8096c7dbe78eaa76f1cb05a328d6f"},
+      "release": "v26.11.9",
+      "paths": ["transport/internet/*", "proxy/*", "go.mod"]
+    },
+    {
+      "repo": "kulikov0/headless-client",
+      "refs": {"HEAD": "a63a0e177d6bf9edbf9b51502a55860c6d3a2832"},
+      "release": null,
+      "paths": ["*.go", "go.mod"]
+    }
+  ]
+}

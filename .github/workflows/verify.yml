@@ -101,6 +101,14 @@ jobs:
             --official "$RUNNER_TEMP/awg31-reference" \
             --official-sha256 "$(sha256sum "$RUNNER_TEMP/awg31-reference" | cut -d ' ' -f1)"
 
+      - name: Check TURN and Linux TUN against an isolated coturn peer
+        run: |
+          sudo apt-get install -y coturn tcpdump
+          TAGS="$(sed -n 's/^  DEFAULT_TAGS: "\(.*\)"/\1/p' .github/workflows/release.yml)"
+          go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
+            -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
+          sudo python3 -B scripts/turn_tun_probe.py --sing-box "$RUNNER_TEMP/sing-box-turn" --turnserver /usr/bin/turnserver
+
   embedded:
     name: Embedded WireGuard on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -151,7 +159,7 @@ jobs:
           go-version: '1.26.11'
           cache: true
 
-      - name: Build with the release tags
+      - name: Cross-build release and optional TURN configurations
         env:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
@@ -163,7 +171,10 @@ jobs:
           go build -trimpath -tags "$TAGS" \
             -ldflags "-s -w -checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=verify" \
             -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
-          ls -l "$RUNNER_TEMP/sing-box"
+          go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
+            -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
+          go version -m "$RUNNER_TEMP/sing-box" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+          ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn"
 
   vulnerabilities:
     name: Known vulnerabilities
@@ -185,7 +196,9 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           TAGS="$(grep -oP 'DEFAULT_TAGS: "\K[^"]+' .github/workflows/release.yml)"
-          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS" ./...
+          "$(go env GOPATH)/bin/govulncheck" -tags "$TAGS,with_turn" ./...
+          CGO_ENABLED=0 go build -trimpath -tags "$TAGS" -ldflags '-s -w -checklinkname=0' -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
+          "$(go env GOPATH)/bin/govulncheck" -mode binary "$RUNNER_TEMP/sing-box"
 
   android:
     name: Android library
@@ -225,9 +238,19 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          make lib_android
+          go run -tags with_turnrelay ./cmd/internal/build_libbox -target android
           ls -l libbox*.aar
           sha256sum libbox*.aar
+
+      - name: Verify TurnRelay in every Android ABI
+        run: |
+          for aar in libbox.aar libbox-legacy.aar; do
+            unzip -tq "$aar"
+            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
+              unzip -p "$aar" "jni/$abi/libbox.so" > "$RUNNER_TEMP/libbox.so"
+              go version -m "$RUNNER_TEMP/libbox.so" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+            done
+          done
 
       - name: Upload the library for device testing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -235,3 +258,11 @@ jobs:
           name: android-aar-${{ github.sha }}
           path: libbox*.aar
           retention-days: 7
+
+      - name: Verify Android libraries with TURN and TurnRelay
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          go run -tags with_turn,with_turnrelay ./cmd/internal/build_libbox -target android
+          unzip -tq libbox.aar
+          unzip -tq libbox-legacy.aar
