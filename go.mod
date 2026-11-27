@@ -96,6 +96,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55
 	github.com/vishvananda/netns v0.0.5
+	github.com/xchacha20-poly1305/sing-trusttunnel v0.3.2
 	github.com/xtaci/kcp-go/v5 v5.6.61
 	github.com/xtaci/smux v1.5.50
 	go.uber.org/zap v1.27.1

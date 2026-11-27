@@ -72,6 +72,7 @@ func InboundRegistry() *inbound.Registry {
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)
+	registerTrustTunnelInbound(registry)
 	registerStubForRemovedInbounds(registry)
 
 	return registry
