@@ -18,6 +18,14 @@
 
 Опубликованный стабильный тег и текущая вершина ветки `stable` расходятся. Первый полный прогон мониторинга по 38 репозиториям и 45 ссылкам нашёл 145 коммитов после `c005f353` до `b1daa1ce`. В этом диапазоне upstream уже перешёл на атомарную публикацию сокета WireGuard detour. Пилот переносит необходимую синхронизацию на API v1.14.4. При обновлении базы нужно проверить переподключение существующим сквозным тестом и снять локальный патч там, где его заменяет upstream. [Сравнение с тегом](https://github.com/SagerNet/sing-box/compare/c005f35300ce76427dc285481ec5695f5b179cd2...b1daa1ce0652a4c19e4fd7d00f451cf5761a9a18) · [Исправление upstream](https://github.com/SagerNet/sing-box/commit/6df1274519df8ab969596a734474e6307ee999d8)
 
+## Обновление безопасности от 27 ноября 2026 года
+
+Зависимость `github.com/go-chi/chi/v5` обновлена с `v5.3.0` до `v5.4.0` для устранения подмены IP-адреса клиента. `govulncheck` v1.10.0 сообщил `No vulnerabilities found.` для исходников CLI с релизными тегами и для готовых бинарников Linux/amd64 и Windows/amd64. [CVE-2026-114437 / GHSA-j6qf-3m9c-vwj3](https://github.com/advisories/GHSA-j6qf-3m9c-vwj3)
+
+Релизные профили CLI, включая профили Makefile, и обе Android AAR исключают outbound NaiveProxy и его нативную зависимость Cronet. Это устраняет поставку Cronet в рамках задачи [#17](https://github.com/PavelLizunov/sing-box-vpnctl/issues/17), открытой в связи с [CVE-2026-76029](https://nvd.nist.gov/vuln/detail/CVE-2026-76029). При загрузке существующего конфига с outbound `naive` ядро завершает проверку и запуск ошибкой `naive outbound is not included in this build`. В метаданных релизных бинарников Linux/amd64 и Windows/amd64 есть chi `v5.4.0` и `with_turnrelay`, ссылок на `cronet-go` и `with_naive_outbound` нет.
+
+Размер stripped-бинарника Linux/amd64 уменьшился с 50 319 625 до 49 885 346 байт (−434 279 байт). При одинаковом chi `v5.4.0` разница от удаления тегов NaiveProxy и Cronet составила 442 471 байт. Все три сборки использовали Go 1.26.11, `CGO_ENABLED=0`, `-trimpath`, `-buildvcs=false` и одинаковые флаги линковки.
+
 ## TrustTunnel
 
 **Решение от 27 ноября 2026 года.** В форк добавлены inbound и outbound `trusttunnel` за тегом `with_trusttunnel`. Профиль релиза оставлен без этого тега. В этом профиле проверка конфигурации обоих направлений подсказывает, с каким тегом перекомпилировать ядро. Библиотека закреплена на `sing-trusttunnel v0.3.2` (`c480a82452e27684fc5d0aa320bf849ce98e1ff4`, GPL-3.0-or-later). Спецификация протокола распространяется на условиях Apache-2.0. [Go-библиотека](https://github.com/xchacha20-poly1305/sing-trusttunnel/tree/c480a82452e27684fc5d0aa320bf849ce98e1ff4) · [Реализация протокола](https://github.com/TrustTunnel/TrustTunnel) · [Сравнение с Hiddify](hiddify.md#815-trusttunnel)

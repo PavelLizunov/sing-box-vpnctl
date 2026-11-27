@@ -173,7 +173,12 @@ jobs:
             -o "$RUNNER_TEMP/sing-box" ./cmd/sing-box
           go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
             -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
-          go version -m "$RUNNER_TEMP/sing-box" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+          build_info=$(go version -m "$RUNNER_TEMP/sing-box")
+          grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b' <<< "$build_info"
+          if grep -Eq 'cronet-go|with_naive_outbound|with_purego' <<< "$build_info"; then
+            echo 'Cronet found in the release binary metadata'
+            exit 1
+          fi
           ls -l "$RUNNER_TEMP/sing-box" "$RUNNER_TEMP/sing-box-turn"
 
   vulnerabilities:
@@ -242,13 +247,18 @@ jobs:
           ls -l libbox*.aar
           sha256sum libbox*.aar
 
-      - name: Verify TurnRelay in every Android ABI
+      - name: Verify TurnRelay and exclude Cronet in every Android ABI
         run: |
           for aar in libbox.aar libbox-legacy.aar; do
             unzip -tq "$aar"
             for abi in arm64-v8a armeabi-v7a x86 x86_64; do
               unzip -p "$aar" "jni/$abi/libbox.so" > "$RUNNER_TEMP/libbox.so"
-              go version -m "$RUNNER_TEMP/libbox.so" | grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b'
+              build_info=$(go version -m "$RUNNER_TEMP/libbox.so")
+              grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b' <<< "$build_info"
+              if grep -Eq 'cronet-go|with_naive_outbound|with_purego' <<< "$build_info"; then
+                echo "Cronet found in $aar for $abi"
+                exit 1
+              fi
             done
           done
 
