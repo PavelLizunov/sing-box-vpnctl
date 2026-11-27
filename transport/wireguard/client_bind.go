@@ -14,8 +14,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
-	"github.com/sagernet/sing/service/pause"
 	"github.com/sagernet/wireguard-go/conn"
 )
 
@@ -24,7 +22,6 @@ var _ conn.Bind = (*ClientBind)(nil)
 type ClientBind struct {
 	ctx                 context.Context
 	logger              logger.Logger
-	pauseManager        pause.Manager
 	bindCtx             context.Context
 	bindDone            context.CancelFunc
 	dialer              N.Dialer
@@ -33,21 +30,18 @@ type ClientBind struct {
 	connAccess          sync.Mutex
 	conn                atomic.Pointer[wireConn]
 	done                chan struct{}
-	isConnect           bool
-	connectAddr         netip.AddrPort
+	destination         M.Socksaddr
 	reserved            [3]uint8
 }
 
-func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, isConnect bool, connectAddr netip.AddrPort, reserved [3]uint8) *ClientBind {
+func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, destination M.Socksaddr, reserved [3]uint8) *ClientBind {
 	return &ClientBind{
 		ctx:                 ctx,
 		logger:              logger,
-		pauseManager:        service.FromContext[pause.Manager](ctx),
 		dialer:              dialer,
 		reservedForEndpoint: make(map[netip.AddrPort][3]uint8),
 		done:                make(chan struct{}),
-		isConnect:           isConnect,
-		connectAddr:         connectAddr,
+		destination:         destination,
 		reserved:            reserved,
 	}
 }
@@ -57,7 +51,6 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
-			serverConn = nil
 		default:
 			return serverConn, nil
 		}
@@ -73,29 +66,17 @@ func (c *ClientBind) connect() (*wireConn, error) {
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
-			serverConn = nil
 		default:
 			return serverConn, nil
 		}
 	}
-	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
-		if err != nil {
-			return nil, err
-		}
-		serverConn = &wireConn{
-			PacketConn: bufio.NewUnbindPacketConn(udpConn),
-			done:       make(chan struct{}),
-		}
-	} else {
-		udpConn, err := c.dialer.ListenPacket(c.bindCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
-		if err != nil {
-			return nil, err
-		}
-		serverConn = &wireConn{
-			PacketConn: bufio.NewPacketConn(udpConn),
-			done:       make(chan struct{}),
-		}
+	udpConn, err := c.dialer.ListenPacket(c.bindCtx, c.destination)
+	if err != nil {
+		return nil, err
+	}
+	serverConn = &wireConn{
+		PacketConn: bufio.NewPacketConn(udpConn),
+		done:       make(chan struct{}),
 	}
 	c.conn.Store(serverConn)
 	return serverConn, nil
@@ -121,7 +102,6 @@ func (c *ClientBind) receive(packets [][]byte, sizes []int, eps []conn.Endpoint)
 		}
 		c.logger.Error(E.Cause(err, "connect to server"))
 		err = nil
-		c.pauseManager.WaitActiveContext(c.bindCtx)
 		select {
 		case <-c.done:
 		case <-time.After(time.Second):
@@ -190,7 +170,7 @@ func (c *ClientBind) Send(bufs [][]byte, ep conn.Endpoint, offset int) error {
 				copy(buf[1:4], reserved[:])
 			}
 		}
-		_, err = udpConn.WriteToUDPAddrPort(buf, destination)
+		_, err = udpConn.WriteTo(buf, M.SocksaddrFromNetIP(destination).UDPAddr())
 		if err != nil {
 			udpConn.Close()
 			return err
@@ -219,16 +199,8 @@ func (c *ClientBind) SetReservedForEndpoint(destination netip.AddrPort, reserved
 
 type wireConn struct {
 	net.PacketConn
-	conn   net.Conn
 	access sync.Mutex
 	done   chan struct{}
-}
-
-func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
-	if w.conn != nil {
-		return w.conn.Write(b)
-	}
-	return w.PacketConn.WriteTo(b, M.SocksaddrFromNetIP(addr).UDPAddr())
 }
 
 func (w *wireConn) Close() error {
