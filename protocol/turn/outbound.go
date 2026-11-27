@@ -60,7 +60,12 @@ func NewOutbound(ctx context.Context, _ adapter.Router, logger log.ContextLogger
 	if err != nil {
 		return nil, err
 	}
-	secure, err := tls.NewDialerFromOptions(ctx, logger, base, options.Server, *options.TLS)
+	secure, err := tls.NewDialerFromOptions(base, tls.ClientOptions{
+		Context:       ctx,
+		Logger:        logger,
+		ServerAddress: options.Server,
+		Options:       *options.TLS,
+	})
 	if err != nil {
 		return nil, err
 	}
