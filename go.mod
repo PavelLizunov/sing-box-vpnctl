@@ -116,6 +116,7 @@ require (
 )
 
 require (
+	github.com/enfein/mieru/v3 v3.40.0
 	github.com/klauspost/reedsolomon v1.13.0
 	github.com/pion/dtls/v3 v3.1.9
 	github.com/pion/logging v0.2.4

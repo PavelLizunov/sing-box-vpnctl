@@ -26,6 +26,7 @@ README.md
 README.ru.md
 docs/vpnctl/*
 include/dnstt.go
+include/mieru*.go
 include/turn.go
 include/turn_stub.go
 include/turn_wireguard_test.go
@@ -33,12 +34,14 @@ include/turnrelay*.go
 include/trusttunnel*.go
 include/v2rayxhttp.go
 option/dnstt.go
+option/mieru*.go
 option/trusttunnel.go
 option/v2ray_xhttp*.go
 option/vpnctl_user_bandwidth.go
 option/vpnctl_user_bandwidth_test.go
 option/wireguard_awg*.go
 protocol/dnstt/*
+protocol/mieru/*
 protocol/trusttunnel/*
 protocol/turn/*
 protocol/turnrelay/*
@@ -72,8 +75,8 @@ cmd/internal/build_libbox/main.go +1 -1
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
 # Module pins carry security fixes ahead of upstream for grpc, chi, dhcp and x/ modules.
-go.mod +75 -53
-go.sum +173 -109
+go.mod +76 -53
+go.sum +161 -113
 include/registry.go +2 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
