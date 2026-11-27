@@ -47,6 +47,7 @@ protocol/turn/*
 protocol/turnrelay/*
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
+release/check_android_profile.sh
 release/fork_boundary_test.py
 release/hygiene/*
 release/security_workflow_test.py

@@ -25,7 +25,7 @@ class ReleaseSecurityTests(unittest.TestCase):
         self.assertNotIn("--clobber", text)
         self.assertNotRegex(text, r'git tag[^\n]* -f')
 
-    def test_default_build_tags_exclude_cronet(self):
+    def test_default_build_tags_include_transports_and_exclude_cronet(self):
         tags = re.search(r'^  DEFAULT_TAGS: "([^"]+)"$', WORKFLOW.read_text(), re.MULTILINE)
         self.assertIsNotNone(tags)
         profiles = {WORKFLOW.name: tags[1]}
@@ -33,7 +33,9 @@ class ReleaseSecurityTests(unittest.TestCase):
             profiles[path.name] = path.read_text().strip()
         for name, tags in profiles.items():
             with self.subTest(profile=name):
-                self.assertTrue({"with_naive_outbound", "with_purego"}.isdisjoint(tags.split(",")))
+                enabled = set(tags.split(","))
+                self.assertTrue({"with_trusttunnel", "with_mieru"} <= enabled)
+                self.assertTrue({"with_naive_outbound", "with_purego"}.isdisjoint(enabled))
 
     def test_exact_revision_and_native_attestation(self):
         text = WORKFLOW.read_text()

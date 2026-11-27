@@ -107,7 +107,10 @@ jobs:
           TAGS="$(sed -n 's/^  DEFAULT_TAGS: "\(.*\)"/\1/p' .github/workflows/release.yml)"
           go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
             -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
-          sudo python3 -B scripts/turn_tun_probe.py --sing-box "$RUNNER_TEMP/sing-box-turn" --turnserver /usr/bin/turnserver
+          probe_dir=$(sudo mktemp -d /tmp/sing-box-turn-probe.XXXXXX)
+          trap 'sudo rm -rf -- "$probe_dir"' EXIT
+          sudo install -m 0755 scripts/turn_tun_probe.py "$RUNNER_TEMP/sing-box-turn" "$probe_dir/"
+          sudo python3 -B "$probe_dir/turn_tun_probe.py" --sing-box "$probe_dir/sing-box-turn" --turnserver /usr/bin/turnserver
 
   embedded:
     name: Embedded WireGuard on ${{ matrix.os }}
@@ -174,7 +177,10 @@ jobs:
           go build -trimpath -tags "$TAGS,with_turn" -ldflags '-s -w -checklinkname=0' \
             -o "$RUNNER_TEMP/sing-box-turn" ./cmd/sing-box
           build_info=$(go version -m "$RUNNER_TEMP/sing-box")
-          grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b' <<< "$build_info"
+          tags=$(sed -n 's/^[[:space:]]*build[[:space:]]*-tags=//p' <<< "$build_info")
+          for feature in with_turnrelay with_trusttunnel with_mieru; do
+            grep -qw "$feature" <<< "$tags"
+          done
           if grep -Eq 'cronet-go|with_naive_outbound|with_purego' <<< "$build_info"; then
             echo 'Cronet found in the release binary metadata'
             exit 1
@@ -247,20 +253,8 @@ jobs:
           ls -l libbox*.aar
           sha256sum libbox*.aar
 
-      - name: Verify TurnRelay and exclude Cronet in every Android ABI
-        run: |
-          for aar in libbox.aar libbox-legacy.aar; do
-            unzip -tq "$aar"
-            for abi in arm64-v8a armeabi-v7a x86 x86_64; do
-              unzip -p "$aar" "jni/$abi/libbox.so" > "$RUNNER_TEMP/libbox.so"
-              build_info=$(go version -m "$RUNNER_TEMP/libbox.so")
-              grep -Eq 'build[[:space:]]+-tags=.*\bwith_turnrelay\b' <<< "$build_info"
-              if grep -Eq 'cronet-go|with_naive_outbound|with_purego' <<< "$build_info"; then
-                echo "Cronet found in $aar for $abi"
-                exit 1
-              fi
-            done
-          done
+      - name: Verify both Android release variants
+        run: bash release/check_android_profile.sh libbox.aar libbox-legacy.aar
 
       - name: Upload the library for device testing
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
