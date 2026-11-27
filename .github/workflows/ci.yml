@@ -69,6 +69,11 @@ jobs:
           python3 release/security_workflow_test.py
           go test -race -tags with_awg,with_wireguard,with_gvisor,with_utls,with_xhttp -ldflags=-checklinkname=0 -count=1 -timeout=180s ./option ./transport/wireguard ./transport/v2rayxhttp
 
+      - name: Test TrustTunnel and Mieru with and without their build tags
+        run: |
+          go test -race -tags with_quic,with_trusttunnel,with_mieru -ldflags=-checklinkname=0 -count=1 -timeout=180s ./protocol/trusttunnel ./protocol/mieru ./include
+          go test -ldflags=-checklinkname=0 -count=1 ./include
+
       - name: Compile sing-box with production tags
         run: |
           TAGS="$(sed -n 's/^  DEFAULT_TAGS: "\(.*\)"/\1/p' .github/workflows/release.yml)"
@@ -86,6 +91,9 @@ jobs:
           go version -m ./sing-box | grep -Eq "build[[:space:]]+-tags=.*\bwith_turnrelay\b"
           go version -m ./sing-box | grep -q "with_xhttp"
           go version -m ./sing-box | grep -q "with_v2ray_api"
+          for feature in with_trusttunnel with_mieru; do
+            grep -qw "$feature" <<< "$(./sing-box version | sed -n 's/^Tags: //p')"
+          done
 
       - name: Validate configuration check
         run: |

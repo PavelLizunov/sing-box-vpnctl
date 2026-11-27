@@ -3,7 +3,7 @@
   "repositories": [
     {
       "repo": "SagerNet/sing-box",
-      "refs": {"HEAD": "b3f845963897f14156609a22c24092221b01558c", "stable": "b1daa1ce0652a4c19e4fd7d00f451cf5761a9a18"},
+      "refs": {"HEAD": "fb93a6f49d2357abd3290e518a477c944a2ff827", "stable": "593b9b2e6b566befd13c9bdcf343b528fd5cab06"},
       "release": "v1.14.5",
       "issues": {"4534": "2026-09-15T06:43:09Z"},
       "paths": ["include/*", "option/*", "protocol/*", "transport/*", "adapter/*", "route/*", "dns/*", "go.mod"]
@@ -130,7 +130,7 @@
     },
     {
       "repo": "SagerNet/sing-tun",
-      "refs": {"HEAD": "2e93ae4ab5ab5f838a7a6014d1082edebda4f5cf"},
+      "refs": {"HEAD": "1a13df1ac21f721794985aab631a56cf96683fef"},
       "release": null,
       "paths": ["*.go", "go.mod"]
     },
@@ -148,13 +148,13 @@
     },
     {
       "repo": "TrustTunnel/TrustTunnel",
-      "refs": {"HEAD": "113cdc89559b9d2698e1477b3d0af89e95c0b7cf"},
+      "refs": {"HEAD": "3c3753c9dfeddc4d1522e22dffc228dd1c4f948c"},
       "release": "v1.3.1",
       "paths": ["*.rs", "Cargo.toml", "Cargo.lock"]
     },
     {
       "repo": "Psiphon-Labs/psiphon-tunnel-core",
-      "refs": {"HEAD": "5dccaa36ae176ba974bcebc2124f172ecec51b08"},
+      "refs": {"HEAD": "9544cec63f8d7d1d5a8d284eebd2ebeb560df75f"},
       "release": "v2.0.43",
       "paths": ["psiphon/*", "go.mod"]
     },
@@ -214,13 +214,13 @@
     },
     {
       "repo": "xchacha20-poly1305/sing-trusttunnel",
-      "refs": {"HEAD": "27f689c5105a7f20bc64d5865c49f481cb8ca68c"},
+      "refs": {"HEAD": "c9ea50baaec1e6260332c434f628b1c848de534b"},
       "release": "v0.3.2",
       "paths": ["*.go", "go.mod"]
     },
     {
       "repo": "XTLS/Xray-core",
-      "refs": {"HEAD": "b56ffef338c8096c7dbe78eaa76f1cb05a328d6f"},
+      "refs": {"HEAD": "4d0bfb4d0d543f9efa4efcc5301d715c5c6ec768"},
       "release": "v26.11.9",
       "paths": ["transport/internet/*", "proxy/*", "go.mod"]
     },

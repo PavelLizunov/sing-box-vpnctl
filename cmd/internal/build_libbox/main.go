@@ -149,28 +149,21 @@ func buildAndroid() {
 
 	bindTarget := getAndroidBindTarget()
 
-	// Build main variant (SDK 24)
-	mainTags := append([]string{}, sharedTags...)
-	// mainTags = append(mainTags, memcTags...)
+	tags := append([]string{"with_trusttunnel", "with_mieru"}, sharedTags...)
 	if debugEnabled {
-		mainTags = append(mainTags, debugTags...)
+		tags = append(tags, debugTags...)
 	}
 	buildAndroidVariant(AndroidBuildConfig{
 		AndroidAPI: 24,
 		OutputName: "libbox.aar",
-		Tags:       mainTags,
+		Tags:       tags,
 	}, bindTarget)
 
 	// Build legacy variant (SDK 21)
-	legacyTags := append([]string{}, sharedTags...)
-	// legacyTags = append(legacyTags, memcTags...)
-	if debugEnabled {
-		legacyTags = append(legacyTags, debugTags...)
-	}
 	buildAndroidVariant(AndroidBuildConfig{
 		AndroidAPI: 21,
 		OutputName: "libbox-legacy.aar",
-		Tags:       legacyTags,
+		Tags:       tags,
 	}, bindTarget)
 }
 

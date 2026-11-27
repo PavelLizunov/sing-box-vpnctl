@@ -47,6 +47,7 @@ protocol/turn/*
 protocol/turnrelay/*
 release/FORK_OWNED
 release/FORK_UPSTREAM_BASE
+release/check_android_profile.sh
 release/fork_boundary_test.py
 release/hygiene/*
 release/security_workflow_test.py
@@ -71,12 +72,12 @@ submodules/wireguard-go/*
 box.go +7 -0
 option/route.go +1 -0
 .gitignore +4 -0
-cmd/internal/build_libbox/main.go +3 -17
+cmd/internal/build_libbox/main.go +6 -27
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
 # Module pins carry security fixes ahead of upstream for grpc, chi, dhcp and x/ modules.
-go.mod +76 -53
-go.sum +161 -113
+go.mod +45 -22
+go.sum +120 -21
 include/registry.go +2 -0
 option/v2ray_transport.go +6 -0
 option/wireguard.go +1 -0
@@ -85,6 +86,6 @@ release/DEFAULT_BUILD_TAGS +1 -1
 release/DEFAULT_BUILD_TAGS_OTHERS +1 -1
 release/DEFAULT_BUILD_TAGS_WINDOWS +1 -1
 transport/v2ray/transport.go +3 -15
-transport/wireguard/client_bind.go +13 -9
+transport/wireguard/client_bind.go +5 -3
 transport/wireguard/endpoint.go +10 -1
 transport/wireguard/endpoint_options.go +2 -0
