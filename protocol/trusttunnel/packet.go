@@ -72,7 +72,7 @@ func (c *packetConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	if len(p) > maxPacketPayload {
 		return 0, errors.New("TrustTunnel UDP payload is too large")
 	}
-	// Client frames have one extra byte for the length of an optional app name.
+	// Protocol: client frames carry one extra byte for the length of an optional app name.
 	frame := make([]byte, packetHeaderSize+1+len(p))
 	binary.BigEndian.PutUint32(frame[:4], uint32(2*packetAddressSize+1+len(p)))
 	if destination.Addr.Is4() {

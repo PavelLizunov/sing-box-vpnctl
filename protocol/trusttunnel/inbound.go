@@ -125,7 +125,7 @@ func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 		if err != nil {
 			return err
 		}
-		// Use net/http's native TLS handling instead of the library's lazy listener.
+		// Quirk: use net/http's native TLS handling instead of the library's lazy listener.
 		tcpListener = stdTLS.NewListener(tcpListener, config)
 	}
 	return service.Start(tcpListener, nil, nil)
@@ -153,8 +153,7 @@ func (h *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-// Keep the core's certificate reload callback while restricting QUIC to h3.
-// The callback normally returns the live TCP config, whose ALPN is h2.
+// Quirk: preserve the core's certificate reload callback while restricting QUIC ALPN to h3 instead of TCP's h2.
 type quicServerTLS struct {
 	tls.ServerConfig
 }
