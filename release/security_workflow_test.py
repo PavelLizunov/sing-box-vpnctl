@@ -3,7 +3,8 @@ from pathlib import Path
 import re
 import unittest
 
-WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/release.yml"
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github/workflows/release.yml"
 
 
 class ReleaseSecurityTests(unittest.TestCase):
@@ -23,6 +24,16 @@ class ReleaseSecurityTests(unittest.TestCase):
         text = WORKFLOW.read_text()
         self.assertNotIn("--clobber", text)
         self.assertNotRegex(text, r'git tag[^\n]* -f')
+
+    def test_default_build_tags_exclude_cronet(self):
+        tags = re.search(r'^  DEFAULT_TAGS: "([^"]+)"$', WORKFLOW.read_text(), re.MULTILINE)
+        self.assertIsNotNone(tags)
+        profiles = {WORKFLOW.name: tags[1]}
+        for path in (ROOT / "release").glob("DEFAULT_BUILD_TAGS*"):
+            profiles[path.name] = path.read_text().strip()
+        for name, tags in profiles.items():
+            with self.subTest(profile=name):
+                self.assertTrue({"with_naive_outbound", "with_purego"}.isdisjoint(tags.split(",")))
 
     def test_exact_revision_and_native_attestation(self):
         text = WORKFLOW.read_text()

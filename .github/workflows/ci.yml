@@ -138,3 +138,15 @@ jobs:
           }
           EOF
           ./sing-box check -c test-config.json
+
+      - name: Reject a NaiveProxy outbound in the release build
+        run: |
+          if output=$(./sing-box check -c stdin 2>&1 <<'EOF'
+          {"outbounds":[{"type":"naive","tag":"naive","server":"example.com","server_port":443}]}
+          EOF
+          ); then
+            echo 'NaiveProxy configuration unexpectedly passed'
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          grep -Fq 'naive outbound is not included in this build' <<< "$output"
