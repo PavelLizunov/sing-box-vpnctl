@@ -135,9 +135,11 @@ def phase(directory, name):
     counts = {}
     for interface, path in files.items():
         def count(expr):
-            lines = subprocess.check_output(["tcpdump", "-nr", str(path), expr],
-                                            text=True, stderr=subprocess.DEVNULL)
-            return len(lines.splitlines())
+            with path.open("rb") as capture:
+                result = subprocess.run(["tcpdump", "-n", "-r", "-", expr], stdin=capture,
+                                        capture_output=True, text=True, check=False, timeout=10)
+            require(result.returncode == 0, f"tcpdump could not read {path.name}: {result.stderr.strip()}")
+            return len(result.stdout.splitlines())
 
         report = path.with_suffix(".log").read_text().splitlines()
         require("0 packets dropped by kernel" in report, "capture dropped packets")

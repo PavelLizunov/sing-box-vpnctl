@@ -72,7 +72,7 @@ submodules/wireguard-go/*
 box.go +7 -0
 option/route.go +1 -0
 .gitignore +4 -0
-cmd/internal/build_libbox/main.go +3 -17
+cmd/internal/build_libbox/main.go +6 -27
 constant/v2ray.go +1 -0
 experimental/clashapi/connections.go +1 -0
 # Module pins carry security fixes ahead of upstream for grpc, chi, dhcp and x/ modules.

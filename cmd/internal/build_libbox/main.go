@@ -63,7 +63,7 @@ func init() {
 	sharedFlags = append(sharedFlags, "-ldflags", build_shared.LinkerFlags(currentTag, false))
 	debugFlags = append(debugFlags, "-ldflags", build_shared.LinkerFlags(currentTag, true))
 
-	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_clash_api", "with_v2ray_api", "with_usbip", "with_openvpn", "with_openconnect", "badlinkname", "tfogo_checklinkname0", "with_awg", "with_xhttp", "with_trusttunnel", "with_mieru")
+	sharedTags = append(sharedTags, "with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_clash_api", "with_v2ray_api", "with_usbip", "with_openvpn", "with_openconnect", "badlinkname", "tfogo_checklinkname0", "with_awg", "with_xhttp")
 	darwinTags = append(darwinTags, "with_dhcp", "grpcnotrace")
 	// memcTags = append(memcTags, "with_tailscale")
 	sharedTags = append(sharedTags, "with_tailscale", "ts_omit_logtail", "ts_omit_ssh", "ts_omit_drive", "ts_omit_taildrop", "ts_omit_webclient", "ts_omit_doctor", "ts_omit_capture", "ts_omit_kube", "ts_omit_aws", "ts_omit_synology", "ts_omit_bird")
@@ -149,28 +149,21 @@ func buildAndroid() {
 
 	bindTarget := getAndroidBindTarget()
 
-	// Build main variant (SDK 24)
-	mainTags := append([]string{}, sharedTags...)
-	// mainTags = append(mainTags, memcTags...)
+	tags := append([]string{"with_trusttunnel", "with_mieru"}, sharedTags...)
 	if debugEnabled {
-		mainTags = append(mainTags, debugTags...)
+		tags = append(tags, debugTags...)
 	}
 	buildAndroidVariant(AndroidBuildConfig{
 		AndroidAPI: 24,
 		OutputName: "libbox.aar",
-		Tags:       mainTags,
+		Tags:       tags,
 	}, bindTarget)
 
 	// Build legacy variant (SDK 21)
-	legacyTags := append([]string{}, sharedTags...)
-	// legacyTags = append(legacyTags, memcTags...)
-	if debugEnabled {
-		legacyTags = append(legacyTags, debugTags...)
-	}
 	buildAndroidVariant(AndroidBuildConfig{
 		AndroidAPI: 21,
 		OutputName: "libbox-legacy.aar",
-		Tags:       legacyTags,
+		Tags:       tags,
 	}, bindTarget)
 }
 

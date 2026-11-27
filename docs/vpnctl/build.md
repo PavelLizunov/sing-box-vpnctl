@@ -7,8 +7,10 @@ Release binaries include the following fork features:
 - `with_awg`: AmneziaWG options for the WireGuard endpoint.
 - `with_xhttp`: the XHTTP client transport.
 - `with_v2ray_api`: the V2Ray stats API.
+- `with_trusttunnel`: TrustTunnel inbound and outbound.
+- `with_mieru`: Mieru inbound and outbound.
 
-The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. The mobile library uses the list in `cmd/internal/build_libbox/main.go`.
+The exact list is `DEFAULT_TAGS` in `.github/workflows/release.yml`. Both Android AARs also include TrustTunnel and Mieru.
 
 Desktop release binaries and both Android AARs exclude the NaiveProxy outbound and its native Cronet dependency. An existing `naive` outbound causes config validation and startup to fail with `naive outbound is not included in this build`.
 
