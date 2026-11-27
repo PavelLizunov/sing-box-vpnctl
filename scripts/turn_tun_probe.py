@@ -136,7 +136,7 @@ def phase(directory, name):
     for interface, path in files.items():
         def count(expr):
             with path.open("rb") as capture:
-                result = subprocess.run(["tcpdump", "-n", "-r", "-", expr], stdin=capture,
+                result = subprocess.run(["tcpdump", "-Z", "root", "-n", "-r", "-", expr], stdin=capture,
                                         capture_output=True, text=True, check=False, timeout=10)
             require(result.returncode == 0, f"tcpdump could not read {path.name}: {result.stderr.strip()}")
             return len(result.stdout.splitlines())
